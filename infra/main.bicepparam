@@ -26,8 +26,12 @@ param enphaseMonthlyCallBudget = 950
 param teslaFleetApiBaseUrl = 'https://fleet-api.prd.na.vn.cloud.tesla.com'
 param teslaCommandMode = 'Proxy'
 
-// Add both cars' VINs once known; the shared connector means only one charges at a time.
-param vins = []
+// Both cars share one wall connector, so only one charges at a time. Neither is a pre-2021 S/X,
+// so both require signed commands — hence teslaCommandMode = 'Proxy' above.
+param vins = [
+  '7SAYGDEEXPA069171' // Bessie
+  '5YJ3E1EA3KF428848' // Tessie
+]
 
 // Flip to true once the container images have been built and pushed by the CI workflow, and the
 // certificate/config share has been seeded.
