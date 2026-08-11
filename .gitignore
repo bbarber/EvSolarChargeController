@@ -1,0 +1,46 @@
+# Build output
+bin/
+obj/
+out/
+publish/
+*.user
+*.suo
+
+# Azure Functions
+local.settings.json
+.azurefunctions/
+azurite/
+__azurite*
+__blobstorage__/
+__queuestorage__/
+.debug/
+
+# Secrets — never commit these
+.secrets/
+*.pem
+!docs/**/*.example.pem
+*.pfx
+*.p12
+.env
+.env.*
+secrets.json
+*.secrets.bicepparam
+
+# Bicep build output
+*.bicep.json
+infra/**/*.json
+!infra/**/*.parameters.json
+
+# IDE
+.vs/
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+
+# Test output
+TestResults/
+coverage/
+*.trx
+*.coverage

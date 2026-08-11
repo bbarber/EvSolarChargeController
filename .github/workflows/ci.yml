@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore EvSolarChargeController.sln
+
+      - name: Build
+        run: dotnet build EvSolarChargeController.sln --configuration Release --no-restore
+
+      - name: Test
+        run: >-
+          dotnet test EvSolarChargeController.sln
+          --configuration Release
+          --no-build
+          --logger "trx;LogFileName=test-results.trx"
+          --results-directory ./TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: ./TestResults
+          if-no-files-found: ignore
+
+  validate-infra:
+    name: Validate Bicep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bicep
+        run: |
+          az bicep install
+          az bicep version
+
+      - name: Build templates
+        # Compiling surfaces both syntax errors and linter warnings without needing Azure creds.
+        run: az bicep build --file infra/main.bicep --outfile /dev/null
+
+      - name: Fail on linter warnings
+        run: |
+          set -o pipefail
+          output=$(az bicep build --file infra/main.bicep --stdout 2>&1 >/dev/null || true)
+          if [[ -n "$output" ]]; then
+            echo "$output"
+            echo "::error::Bicep reported warnings or errors"
+            exit 1
+          fi
+          echo "No Bicep warnings."
+
+  lint-shell:
+    name: Lint shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ShellCheck
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          shellcheck tools/seed-keyvault.sh tools/tesla-command-proxy/entrypoint.sh

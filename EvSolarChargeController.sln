@@ -1,0 +1,43 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{6525FEA5-9766-4110-827B-144B947D7E2C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EvSolarChargeController.Functions", "src\EvSolarChargeController.Functions\EvSolarChargeController.Functions.csproj", "{04116F2A-46CF-4613-B21F-9D72494FAD5D}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{50B7BFC5-688A-49F5-975A-E3FD3BC89D01}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EvSolarChargeController.Tests", "tests\EvSolarChargeController.Tests\EvSolarChargeController.Tests.csproj", "{7C7B96E0-9329-4430-ABFB-C00AD28BE47A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EvSolarChargeController.TelemetryBridge", "src\EvSolarChargeController.TelemetryBridge\EvSolarChargeController.TelemetryBridge.csproj", "{D080CBD5-5330-45A5-B109-DD004C5847D0}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{04116F2A-46CF-4613-B21F-9D72494FAD5D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{04116F2A-46CF-4613-B21F-9D72494FAD5D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{04116F2A-46CF-4613-B21F-9D72494FAD5D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{04116F2A-46CF-4613-B21F-9D72494FAD5D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7C7B96E0-9329-4430-ABFB-C00AD28BE47A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7C7B96E0-9329-4430-ABFB-C00AD28BE47A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7C7B96E0-9329-4430-ABFB-C00AD28BE47A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7C7B96E0-9329-4430-ABFB-C00AD28BE47A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D080CBD5-5330-45A5-B109-DD004C5847D0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D080CBD5-5330-45A5-B109-DD004C5847D0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D080CBD5-5330-45A5-B109-DD004C5847D0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D080CBD5-5330-45A5-B109-DD004C5847D0}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{04116F2A-46CF-4613-B21F-9D72494FAD5D} = {6525FEA5-9766-4110-827B-144B947D7E2C}
+		{7C7B96E0-9329-4430-ABFB-C00AD28BE47A} = {50B7BFC5-688A-49F5-975A-E3FD3BC89D01}
+		{D080CBD5-5330-45A5-B109-DD004C5847D0} = {6525FEA5-9766-4110-827B-144B947D7E2C}
+	EndGlobalSection
+EndGlobal

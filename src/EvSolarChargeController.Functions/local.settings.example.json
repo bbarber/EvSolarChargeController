@@ -1,0 +1,36 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "WEBSITE_TIME_ZONE": "America/Chicago",
+
+    "Charging__SystemVoltage": "240",
+    "Charging__MinChargeAmps": "5",
+    "Charging__MaxChargeAmps": "16",
+
+    "PollingWindow__TimeZone": "America/Chicago",
+    "PollingWindow__StartHourLocal": "9",
+    "PollingWindow__EndHourLocal": "19",
+
+    "Enphase__ClientId": "",
+    "Enphase__ClientSecret": "",
+    "Enphase__ApiKey": "",
+    "Enphase__SystemId": "",
+    "Enphase__RefreshToken": "",
+    "Enphase__MonthlyCallBudget": "950",
+
+    "Tesla__ClientId": "",
+    "Tesla__ClientSecret": "",
+    "Tesla__RefreshToken": "",
+    "Tesla__FleetApiBaseUrl": "https://fleet-api.prd.na.vn.cloud.tesla.com",
+    "Tesla__CommandMode": "Proxy",
+    "Tesla__CommandProxyBaseUrl": "https://localhost:4443",
+    "Tesla__CommandProxySharedSecret": "local-dev-secret",
+    "Tesla__Vins__0": "",
+
+    "Ingest__SharedSecret": "local-dev-secret",
+
+    "SecretStore__KeyVaultUri": ""
+  }
+}

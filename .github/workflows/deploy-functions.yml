@@ -1,0 +1,77 @@
+name: Deploy functions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/EvSolarChargeController.Functions/**'
+      - '.github/workflows/deploy-functions.yml'
+  workflow_dispatch:
+    inputs:
+      functionAppName:
+        description: Function App name (defaults to the FUNCTION_APP_NAME variable)
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-functions
+  cancel-in-progress: false
+
+env:
+  PROJECT: src/EvSolarChargeController.Functions/EvSolarChargeController.Functions.csproj
+
+jobs:
+  deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      # Guard the deploy on the same tests CI runs; a broken decision engine controls real hardware.
+      - name: Test
+        run: dotnet test EvSolarChargeController.sln --configuration Release
+
+      - name: Publish
+        run: dotnet publish "$PROJECT" --configuration Release --output ./publish
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve target app
+        id: target
+        run: |
+          name="${{ inputs.functionAppName || vars.FUNCTION_APP_NAME }}"
+          if [[ -z "$name" ]]; then
+            echo "::error::No Function App name. Set the FUNCTION_APP_NAME repository variable or pass it as an input."
+            exit 1
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ steps.target.outputs.name }}
+          package: ./publish
+
+      - name: Smoke check
+        run: |
+          # The app should report its functions after deployment; a missing SolarSyncTimer means
+          # the isolated worker failed to index.
+          az functionapp function list \
+            --name "${{ steps.target.outputs.name }}" \
+            --resource-group "${{ vars.RESOURCE_GROUP }}" \
+            --query "[].name" \
+            --output tsv

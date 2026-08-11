@@ -1,0 +1,86 @@
+name: Deploy infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      resourceGroup:
+        description: Resource group to deploy into
+        required: true
+        default: rg-evsolar-prod
+      location:
+        description: Azure region
+        required: true
+        default: centralus
+      whatIf:
+        description: Preview changes without applying them
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-infra
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: ${{ inputs.whatIf && 'What-if' || 'Deploy' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.whatIf && 'preview' || 'production' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Federated credentials — no client secret is stored in GitHub.
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure resource group
+        if: ${{ !inputs.whatIf }}
+        run: |
+          az group create \
+            --name "${{ inputs.resourceGroup }}" \
+            --location "${{ inputs.location }}" \
+            --output none
+
+      - name: What-if
+        if: ${{ inputs.whatIf }}
+        run: |
+          az deployment group what-if \
+            --resource-group "${{ inputs.resourceGroup }}" \
+            --template-file infra/main.bicep \
+            --parameters infra/main.bicepparam \
+            --parameters ingestSharedSecret="${{ secrets.INGEST_SHARED_SECRET }}" \
+                         proxySharedSecret="${{ secrets.PROXY_SHARED_SECRET }}"
+
+      - name: Deploy
+        if: ${{ !inputs.whatIf }}
+        id: deploy
+        run: |
+          az deployment group create \
+            --resource-group "${{ inputs.resourceGroup }}" \
+            --template-file infra/main.bicep \
+            --parameters infra/main.bicepparam \
+            --parameters ingestSharedSecret="${{ secrets.INGEST_SHARED_SECRET }}" \
+                         proxySharedSecret="${{ secrets.PROXY_SHARED_SECRET }}" \
+            --query properties.outputs \
+            --output json > outputs.json
+          cat outputs.json
+
+      - name: Summarize
+        if: ${{ !inputs.whatIf }}
+        run: |
+          {
+            echo "### Deployment outputs"
+            echo
+            echo '```json'
+            cat outputs.json
+            echo '```'
+            echo
+            echo "Secrets still need seeding: \`./tools/seed-keyvault.sh <key-vault-name>\`"
+          } >> "$GITHUB_STEP_SUMMARY"
