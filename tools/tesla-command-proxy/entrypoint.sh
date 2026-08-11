@@ -36,6 +36,9 @@ if [[ -z "${PROXY_SHARED_SECRET:-}" ]]; then
 fi
 
 export PROXY_SHARED_SECRET
+# Single quotes are deliberate: envsubst takes a literal list of variable *names* to substitute,
+# and expanding it here would splice the secret into the argument instead.
+# shellcheck disable=SC2016
 envsubst '${PROXY_SHARED_SECRET}' \
   < /etc/nginx/templates/proxy.conf.template \
   > /etc/nginx/conf.d/proxy.conf

@@ -9,9 +9,10 @@
 # 8080 and re-wraps it as HTTPS to the proxy on loopback:4443. Traffic is still encrypted
 # everywhere it leaves the container — Container Apps terminates a real certificate at the edge.
 
-FROM golang:1.22-bookworm AS build
+# vehicle-command's go.mod requires go >= 1.23.
+FROM golang:1.23-bookworm AS build
 
-ARG VEHICLE_COMMAND_VERSION=v0.3.2
+ARG VEHICLE_COMMAND_VERSION=v0.4.1
 
 RUN go install github.com/teslamotors/vehicle-command/cmd/tesla-http-proxy@${VEHICLE_COMMAND_VERSION}
 
