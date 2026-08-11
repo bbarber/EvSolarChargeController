@@ -14,7 +14,12 @@ FROM golang:1.23-bookworm AS build
 
 ARG VEHICLE_COMMAND_VERSION=v0.4.1
 
-RUN go install github.com/teslamotors/vehicle-command/cmd/tesla-http-proxy@${VEHICLE_COMMAND_VERSION}
+# Built from a clone rather than `go install pkg@version`: vehicle-command's go.mod carries replace
+# directives, which the module-install path refuses. Building in-tree honours them.
+RUN git clone --depth 1 --branch ${VEHICLE_COMMAND_VERSION} \
+      https://github.com/teslamotors/vehicle-command.git /src \
+ && cd /src \
+ && CGO_ENABLED=0 go build -trimpath -o /out/tesla-http-proxy ./cmd/tesla-http-proxy
 
 FROM debian:bookworm-slim
 
@@ -22,7 +27,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends nginx openssl ca-certificates gettext-base \
  && rm -rf /var/lib/apt/lists/*
 
-COPY --from=build /go/bin/tesla-http-proxy /usr/local/bin/tesla-http-proxy
+COPY --from=build /out/tesla-http-proxy /usr/local/bin/tesla-http-proxy
 COPY tools/tesla-command-proxy/nginx.conf.template /etc/nginx/templates/proxy.conf.template
 COPY tools/tesla-command-proxy/entrypoint.sh /usr/local/bin/entrypoint.sh
 
