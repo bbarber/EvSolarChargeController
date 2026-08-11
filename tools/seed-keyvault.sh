@@ -30,19 +30,23 @@ else
   ENV_FILES=("$REPO_ROOT/.secrets/enphase.env" "$REPO_ROOT/.secrets/tesla.env")
 fi
 
-# Maps the env-file variable name to the Key Vault secret name the Function App expects.
-declare -A SECRET_NAMES=(
-  [ENPHASE_API_KEY]=enphase-api-key
-  [ENPHASE_CLIENT_ID]=enphase-client-id
-  [ENPHASE_CLIENT_SECRET]=enphase-client-secret
-  [ENPHASE_REFRESH_TOKEN]=enphase-refresh-token
-  [ENPHASE_SYSTEM_ID]=enphase-system-id
-  [TESLA_CLIENT_ID]=tesla-client-id
-  [TESLA_CLIENT_SECRET]=tesla-client-secret
-  [TESLA_REFRESH_TOKEN]=tesla-refresh-token
-  [INGEST_SHARED_SECRET]=ingest-shared-secret
-  [PROXY_SHARED_SECRET]=proxy-shared-secret
-)
+# Maps an env-file variable name to the Key Vault secret name the Function App expects.
+# A case statement rather than an associative array: macOS still ships bash 3.2, which has none.
+secret_name_for() {
+  case "$1" in
+    ENPHASE_API_KEY)        echo enphase-api-key ;;
+    ENPHASE_CLIENT_ID)      echo enphase-client-id ;;
+    ENPHASE_CLIENT_SECRET)  echo enphase-client-secret ;;
+    ENPHASE_REFRESH_TOKEN)  echo enphase-refresh-token ;;
+    ENPHASE_SYSTEM_ID)      echo enphase-system-id ;;
+    TESLA_CLIENT_ID)        echo tesla-client-id ;;
+    TESLA_CLIENT_SECRET)    echo tesla-client-secret ;;
+    TESLA_REFRESH_TOKEN)    echo tesla-refresh-token ;;
+    INGEST_SHARED_SECRET)   echo ingest-shared-secret ;;
+    PROXY_SHARED_SECRET)    echo proxy-shared-secret ;;
+    *)                      echo "" ;;
+  esac
+}
 
 seeded=0
 skipped=0
@@ -60,7 +64,7 @@ for env_file in "${ENV_FILES[@]}"; do
     [[ -z "${key// }" || "$key" == \#* ]] && continue
 
     key="${key// }"
-    secret_name="${SECRET_NAMES[$key]:-}"
+    secret_name="$(secret_name_for "$key")"
 
     if [[ -z "$secret_name" ]]; then
       echo "  ? $key has no Key Vault mapping, ignoring"

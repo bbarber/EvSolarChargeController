@@ -31,6 +31,15 @@ public sealed class VehicleStateEntity : ITableEntity
     /// <summary>Vehicle-reported maximum requestable current, when the car sends it.</summary>
     public int? ReportedMaxAmps { get; set; }
 
+    /// <summary>Battery state of charge, percent, from the vehicle's last report.</summary>
+    public int? BatteryLevelPercent { get; set; }
+
+    /// <summary>
+    /// When this controller last issued charge_stop because the SoC cap was reached. If the car is
+    /// charging again well after this, someone restarted it deliberately.
+    /// </summary>
+    public DateTimeOffset? SocStopIssuedAt { get; set; }
+
     /// <summary>Serialized <see cref="Domain.ChargingState"/>.</summary>
     public string ChargingState { get; set; } = Domain.ChargingState.Unknown.ToString();
 

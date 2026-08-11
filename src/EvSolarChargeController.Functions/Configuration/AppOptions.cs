@@ -23,6 +23,14 @@ public sealed class ChargingOptions
     public TimeSpan LookbackWindow { get; set; } = TimeSpan.FromMinutes(60);
 
     /// <summary>
+    /// This controller will not drive charging at or above this state of charge, regardless of the
+    /// limit set on the vehicle. If the car is charging above it, we stop the session once and then
+    /// leave it alone. A person can still charge past this by restarting it themselves — that is
+    /// treated as a manual override, exactly like changing the amps.
+    /// </summary>
+    public int MaxSocPercent { get; set; } = 80;
+
+    /// <summary>
     /// After we issue a set_charging_amps we ignore reported-amps mismatches for this long, so that
     /// in-flight telemetry carrying the previous value is not misread as a manual override.
     /// </summary>

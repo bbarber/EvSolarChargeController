@@ -184,4 +184,30 @@ public class TelemetryDecoderTests
 
         Decoder.Decode(payload.ToByteArray(), Received)!.ObservedAt.Should().Be(Received);
     }
+
+    [Fact]
+    public void Decodes_battery_level_as_state_of_charge()
+    {
+        var bytes = Encode(Datum(Field.BatteryLevel, new Value { FloatValue = 73.4f }));
+
+        Decoder.Decode(bytes, Received)!.BatteryLevelPercent.Should().Be(73);
+    }
+
+    [Fact]
+    public void Falls_back_to_soc_when_battery_level_is_absent()
+    {
+        var bytes = Encode(Datum(Field.Soc, new Value { FloatValue = 64f }));
+
+        Decoder.Decode(bytes, Received)!.BatteryLevelPercent.Should().Be(64);
+    }
+
+    [Fact]
+    public void Prefers_battery_level_over_soc()
+    {
+        var bytes = Encode(
+            Datum(Field.BatteryLevel, new Value { IntValue = 70 }),
+            Datum(Field.Soc, new Value { IntValue = 68 }));
+
+        Decoder.Decode(bytes, Received)!.BatteryLevelPercent.Should().Be(70);
+    }
 }

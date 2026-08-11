@@ -244,6 +244,10 @@ telemetry hostname, **port 8443**, the full Let's Encrypt chain as `ca`, and the
 | `ChargeCurrentRequest` | 60s |
 | `ChargeCurrentRequestMax` | 300s |
 | `ChargePortLatch` | 60s |
+| `BatteryLevel` | 300s |
+| `Soc` | 300s |
+
+`BatteryLevel` / `Soc` drive the state-of-charge cap — without them the cap silently never engages.
 
 Poll the GET form of the same endpoint until `synced` is true. Diagnose problems with
 `fleet_telemetry_errors`.

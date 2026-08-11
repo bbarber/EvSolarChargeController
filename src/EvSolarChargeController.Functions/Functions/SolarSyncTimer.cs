@@ -91,6 +91,13 @@ public sealed class SolarSyncTimer
         var vehicle = await SelectVehicleAsync(cancellationToken);
         var decision = ChargeDecisionEngine.Decide(vehicle, summary.MaxAmps, _charging, now);
 
+        if (decision.ShouldStop)
+        {
+            _logger.LogInformation("{Reason}", decision.Reason);
+            await StopChargingAsync(vehicle!, now, cancellationToken);
+            return;
+        }
+
         if (!decision.ShouldSend)
         {
             _logger.LogInformation("No command sent ({Action}): {Reason}", decision.Action, decision.Reason);
@@ -120,6 +127,37 @@ public sealed class SolarSyncTimer
             cancellationToken);
 
         _logger.LogInformation("Charge current for {Vin} set to {Amps}A.", vehicle.Vin, target);
+    }
+
+    /// <summary>
+    /// Ends the charge session at the state-of-charge cap and records that we did so, which is what
+    /// lets a later manual restart be recognised as an override rather than fought every cycle.
+    /// </summary>
+    private async Task StopChargingAsync(VehicleStateEntity vehicle, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var result = await _tesla.StopChargingAsync(vehicle.Vin, cancellationToken);
+
+        if (!result.Success)
+        {
+            _logger.LogError("charge_stop failed for {Vin}: {Error}", vehicle.Vin, result.Error);
+            return;
+        }
+
+        await _vehicles.MutateAsync(
+            vehicle.Vin,
+            state =>
+            {
+                state.SocStopIssuedAt = now;
+                // Forget our amp setting: the next session starts fresh, and keeping a stale value
+                // would make the first telemetry frame of that session look like an override.
+                state.LastSetAmps = null;
+                state.LastSetAt = null;
+                return state;
+            },
+            now,
+            cancellationToken);
+
+        _logger.LogInformation("Charging stopped for {Vin} at the state-of-charge cap.", vehicle.Vin);
     }
 
     /// <summary>Polls Enphase and banks the reading. Returns null when the cycle should be skipped.</summary>

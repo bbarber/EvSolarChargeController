@@ -25,6 +25,12 @@ public interface ITeslaFleetClient
     /// wake a sleeping vehicle, which the design explicitly forbids.
     /// </remarks>
     Task<CommandResult> SetChargingAmpsAsync(string vin, int amps, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stops an in-progress charge session. Used when the state-of-charge cap is reached, so this
+    /// controller never charges past it regardless of the limit configured on the vehicle.
+    /// </summary>
+    Task<CommandResult> StopChargingAsync(string vin, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -69,7 +75,18 @@ public sealed class TeslaFleetClient : ITeslaFleetClient
         _logger = logger;
     }
 
-    public async Task<CommandResult> SetChargingAmpsAsync(string vin, int amps, CancellationToken cancellationToken = default)
+    public Task<CommandResult> SetChargingAmpsAsync(string vin, int amps, CancellationToken cancellationToken = default) =>
+        SendCommandAsync(vin, "set_charging_amps", new { charging_amps = amps }, $"set_charging_amps={amps}", cancellationToken);
+
+    public Task<CommandResult> StopChargingAsync(string vin, CancellationToken cancellationToken = default) =>
+        SendCommandAsync(vin, "charge_stop", new { }, "charge_stop", cancellationToken);
+
+    private async Task<CommandResult> SendCommandAsync(
+        string vin,
+        string command,
+        object body,
+        string description,
+        CancellationToken cancellationToken)
     {
         string accessToken;
         try
@@ -78,7 +95,7 @@ public sealed class TeslaFleetClient : ITeslaFleetClient
         }
         catch (TeslaAuthException ex)
         {
-            _logger.LogError(ex, "Tesla authentication failed; cannot send set_charging_amps.");
+            _logger.LogError(ex, "Tesla authentication failed; cannot send {Description}.", description);
             return CommandResult.Fail(ex.Message);
         }
 
@@ -89,11 +106,11 @@ public sealed class TeslaFleetClient : ITeslaFleetClient
                 "Tesla CommandMode is Proxy but CommandProxyBaseUrl is not configured. See docs/SETUP.md.");
         }
 
-        var url = $"{baseUrl.TrimEnd('/')}/api/1/vehicles/{Uri.EscapeDataString(vin)}/command/set_charging_amps";
+        var url = $"{baseUrl.TrimEnd('/')}/api/1/vehicles/{Uri.EscapeDataString(vin)}/command/{command}";
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        request.Content = JsonContent(new { charging_amps = amps });
+        request.Content = JsonContent(body);
 
         if (_options.CommandMode == TeslaCommandMode.Proxy && !string.IsNullOrWhiteSpace(_options.CommandProxySharedSecret))
         {
@@ -103,27 +120,36 @@ public sealed class TeslaFleetClient : ITeslaFleetClient
         try
         {
             using var response = await _http.SendAsync(request, cancellationToken);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
-                return CommandResult.Fail($"HTTP {(int)response.StatusCode} from set_charging_amps: {Truncate(body)}");
+                return CommandResult.Fail($"HTTP {(int)response.StatusCode} from {command}: {Truncate(responseBody)}");
             }
 
             // Fleet API wraps command outcomes in {"response":{"result":bool,"reason":string}} —
             // a 200 with result=false is still a failure.
-            var parsed = TryParse<CommandEnvelope>(body);
+            var parsed = TryParse<CommandEnvelope>(responseBody);
             if (parsed?.Response is { Result: false } failure)
             {
-                return CommandResult.Fail($"Vehicle rejected set_charging_amps: {failure.Reason ?? "no reason given"}");
+                var reason = failure.Reason ?? "no reason given";
+
+                // Stopping a session that is not running is the desired end state, not an error.
+                if (command == "charge_stop" && reason.Contains("not_charging", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogInformation("{Vin} was already not charging; treating charge_stop as satisfied.", vin);
+                    return CommandResult.Ok();
+                }
+
+                return CommandResult.Fail($"Vehicle rejected {command}: {reason}");
             }
 
-            _logger.LogInformation("set_charging_amps={Amps} accepted for {Vin}.", amps, vin);
+            _logger.LogInformation("{Description} accepted for {Vin}.", description, vin);
             return CommandResult.Ok();
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
-            _logger.LogWarning(ex, "Transport failure sending set_charging_amps to {Vin}.", vin);
+            _logger.LogWarning(ex, "Transport failure sending {Command} to {Vin}.", command, vin);
             return CommandResult.Fail(ex.Message);
         }
     }

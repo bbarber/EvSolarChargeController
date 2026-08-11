@@ -16,6 +16,9 @@ public sealed record TelemetryObservation
     /// <summary>Vehicle-reported ceiling (Tesla field <c>ChargeCurrentRequestMax</c>), when present.</summary>
     public int? ReportedMaxAmps { get; init; }
 
+    /// <summary>Battery state of charge, percent (Tesla fields <c>BatteryLevel</c> / <c>Soc</c>).</summary>
+    public int? BatteryLevelPercent { get; init; }
+
     public ChargingState? ChargingState { get; init; }
 
     /// <summary>True when the charge port latch reports disengaged — a second unplug signal.</summary>
@@ -57,6 +60,11 @@ public static class OverrideEvaluator
             state.ChargeAmps = reported;
         }
 
+        if (observation.BatteryLevelPercent is { } soc and >= 0 and <= 100)
+        {
+            state.BatteryLevelPercent = soc;
+        }
+
         var effectiveState = state.GetChargingState();
         var unplugged = effectiveState.IsUnplugged() || observation.LatchDisengaged == true;
 
@@ -68,6 +76,7 @@ public static class OverrideEvaluator
             state.OverrideDetectedAt = null;
             state.LastSetAmps = null;
             state.LastSetAt = null;
+            state.SocStopIssuedAt = null;
         }
         else if (ShouldFlagOverride(state, observation, options, effectiveState))
         {
@@ -88,6 +97,16 @@ public static class OverrideEvaluator
         if (state.OverrideActive)
         {
             return false; // Already flagged; nothing to re-evaluate until unplug.
+        }
+
+        // We stopped the session at the SoC cap and the car is charging again. Nothing in this
+        // controller restarts a charge, so a person did — hand back control rather than fighting
+        // them by stopping it again every cycle.
+        if (state.SocStopIssuedAt is { } stoppedAt
+            && effectiveState.IsActivelyCharging()
+            && observation.ObservedAt - stoppedAt >= options.OverrideSettleWindow)
+        {
+            return true;
         }
 
         if (observation.ReportedAmps is not { } reported)

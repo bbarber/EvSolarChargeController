@@ -8,6 +8,15 @@ public enum ChargeAction
     /// <summary>Issue a set_charging_amps command.</summary>
     SetAmps,
 
+    /// <summary>
+    /// State of charge has reached the configured cap. Issue charge_stop — this controller does
+    /// not charge past it even when the vehicle's own limit is set higher.
+    /// </summary>
+    StopCharging,
+
+    /// <summary>At or above the SoC cap and already stopped; nothing to do.</summary>
+    SkipAtSocCap,
+
     /// <summary>No telemetry has ever arrived for this vehicle, or it is too old to trust.</summary>
     SkipNoVehicleState,
 
@@ -29,9 +38,13 @@ public sealed record ChargeDecision(ChargeAction Action, int? TargetAmps, string
 {
     public bool ShouldSend => Action == ChargeAction.SetAmps;
 
+    public bool ShouldStop => Action == ChargeAction.StopCharging;
+
     public static ChargeDecision Skip(ChargeAction action, string reason) => new(action, null, reason);
 
     public static ChargeDecision Set(int amps, string reason) => new(ChargeAction.SetAmps, amps, reason);
+
+    public static ChargeDecision Stop(string reason) => new(ChargeAction.StopCharging, null, reason);
 }
 
 /// <summary>
@@ -71,6 +84,22 @@ public static class ChargeDecisionEngine
         }
 
         var state = vehicle.GetChargingState();
+
+        // The SoC cap is checked before the charging test so that an already-stopped car at or
+        // above the cap reports the real reason rather than a generic "not charging".
+        if (vehicle.BatteryLevelPercent is { } soc && soc >= options.MaxSocPercent)
+        {
+            if (!state.IsActivelyCharging())
+            {
+                return ChargeDecision.Skip(
+                    ChargeAction.SkipAtSocCap,
+                    $"{vehicle.Vin} is at {soc}% (cap {options.MaxSocPercent}%) and not charging.");
+            }
+
+            return ChargeDecision.Stop(
+                $"{vehicle.Vin} reached {soc}%, at or above the {options.MaxSocPercent}% cap; stopping the charge session.");
+        }
+
         if (!state.IsActivelyCharging())
         {
             return ChargeDecision.Skip(

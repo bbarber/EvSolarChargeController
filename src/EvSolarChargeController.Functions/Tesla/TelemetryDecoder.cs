@@ -58,6 +58,8 @@ public sealed class TelemetryDecoder : ITelemetryDecoder
         int? chargeAmps = null;
         int? chargeCurrentRequest = null;
         int? maxAmps = null;
+        int? soc = null;
+        int? batteryLevel = null;
         ChargingState? chargingState = null;
         bool? latchDisengaged = null;
 
@@ -90,6 +92,14 @@ public sealed class TelemetryDecoder : ITelemetryDecoder
                     latchDisengaged = AsLatchDisengaged(datum.Value);
                     break;
 
+                case Field.BatteryLevel:
+                    batteryLevel = AsInt(datum.Value);
+                    break;
+
+                case Field.Soc:
+                    soc = AsInt(datum.Value);
+                    break;
+
                 default:
                     break;
             }
@@ -107,6 +117,10 @@ public sealed class TelemetryDecoder : ITelemetryDecoder
             // via ChargeCurrentRequest, so fall back to that before giving up.
             ReportedAmps = chargeAmps ?? chargeCurrentRequest,
             ReportedMaxAmps = maxAmps,
+            // BatteryLevel is the dashboard percentage; Soc is the underlying figure and is not
+            // always present. Prefer the former and fall back, so the SoC cap still has a value
+            // to work from on firmware that only sends one of them.
+            BatteryLevelPercent = batteryLevel ?? soc,
             ChargingState = chargingState,
             LatchDisengaged = latchDisengaged,
         };

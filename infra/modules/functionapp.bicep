@@ -152,10 +152,9 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
             name: 'FUNCTIONS_WORKER_RUNTIME'
             value: 'dotnet-isolated'
           }
-          {
-            name: 'WEBSITE_RUN_FROM_PACKAGE'
-            value: '1'
-          }
+          // No WEBSITE_RUN_FROM_PACKAGE here on purpose. On the Linux Consumption plan it must be a
+          // blob URL rather than '1', and setting it to '1' makes zip deployment fail with an
+          // opaque "Bad Request". The deployment tooling sets the correct value itself.
           {
             name: 'WEBSITE_TIME_ZONE'
             value: timeZone
