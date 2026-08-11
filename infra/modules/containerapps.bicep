@@ -29,6 +29,14 @@ param storageAccountName string
 @description('Azure Files share holding fleet-telemetry config, TLS cert/key, and the Tesla fleet private key.')
 param configShareName string = 'telemetry-config'
 
+@description('''
+External TCP port for the telemetry endpoint. Not 443: externally exposed TCP ports must be unique
+across the whole Container Apps environment, and 80/443 are already taken by the built-in HTTP
+ingress that the command proxy uses. Tesla's fleet_telemetry_config takes an explicit port, so this
+value just has to match what is registered on the vehicle.
+''')
+param telemetryPort int = 8443
+
 @description('Container image for Tesla fleet-telemetry.')
 param fleetTelemetryImage string = 'tesla/fleet-telemetry:v0.7.0'
 
@@ -155,10 +163,12 @@ resource telemetryApp 'Microsoft.App/containerApps@2024-03-01' = {
       ingress: {
         external: true
         // TCP, not HTTP: the managed HTTP front end would terminate TLS and strip the client
-        // certificate that fleet-telemetry needs to identify the vehicle.
+        // certificate that fleet-telemetry needs to identify the vehicle. This is also why the
+        // container serves its own Let's Encrypt certificate — Azure's free managed certificates
+        // only apply to HTTP ingress.
         transport: 'tcp'
-        targetPort: 443
-        exposedPort: 443
+        targetPort: telemetryPort
+        exposedPort: telemetryPort
         allowInsecure: false
       }
       secrets: [
@@ -315,6 +325,10 @@ resource proxyApp 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 output telemetryFqdn string = telemetryApp.properties.configuration.ingress.fqdn
+output telemetryPort int = telemetryPort
 output proxyFqdn string = proxyApp.properties.configuration.ingress.fqdn
 output proxyBaseUrl string = 'https://${proxyApp.properties.configuration.ingress.fqdn}'
 output environmentId string = managedEnvironment.id
+
+@description('Point the DuckDNS A record for the telemetry hostname at this address.')
+output environmentStaticIp string = managedEnvironment.properties.staticIp

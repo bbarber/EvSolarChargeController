@@ -1,0 +1,129 @@
+name: Renew telemetry certificate
+
+# fleet-telemetry serves its own TLS certificate, because Tesla's mutual-TLS handshake has to reach
+# the process untouched — which means TCP passthrough ingress, and Azure's free managed
+# certificates only cover HTTP ingress. So we issue and rotate a Let's Encrypt certificate here.
+#
+# DNS-01 rather than HTTP-01: nothing answers HTTP on the telemetry hostname (it is a raw TCP
+# listener on a non-standard port), so proving control has to happen in DNS.
+
+on:
+  schedule:
+    # Let's Encrypt certificates last 90 days. Weekly checks give plenty of retries before expiry,
+    # and certbot no-ops until the certificate is within 30 days of expiring.
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Renew even if the certificate is not near expiry
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: renew-telemetry-cert
+  cancel-in-progress: false
+
+jobs:
+  renew:
+    name: Issue and install
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check configuration
+        id: config
+        run: |
+          missing=()
+          [[ -z "${{ vars.TELEMETRY_HOSTNAME }}" ]] && missing+=(TELEMETRY_HOSTNAME)
+          [[ -z "${{ vars.STORAGE_ACCOUNT_NAME }}" ]] && missing+=(STORAGE_ACCOUNT_NAME)
+          [[ -z "${{ vars.RESOURCE_GROUP }}" ]] && missing+=(RESOURCE_GROUP)
+          [[ -z "${{ secrets.DUCKDNS_TOKEN }}" ]] && missing+=(DUCKDNS_TOKEN)
+          if (( ${#missing[@]} )); then
+            echo "::error::Not configured yet. Missing: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Install certbot and the DuckDNS plugin
+        run: |
+          python -m pip install --upgrade pip
+          pip install certbot certbot-dns-duckdns
+
+      - name: Issue certificate
+        env:
+          DUCKDNS_TOKEN: ${{ secrets.DUCKDNS_TOKEN }}
+          HOSTNAME: ${{ vars.TELEMETRY_HOSTNAME }}
+          ACME_EMAIL: ${{ vars.ACME_EMAIL }}
+        run: |
+          # DuckDNS holds only one TXT value per domain at a time, so a single hostname per
+          # certificate — no wildcards, no SANs sharing the challenge record.
+          certbot certonly \
+            --non-interactive \
+            --agree-tos \
+            --email "$ACME_EMAIL" \
+            --preferred-challenges dns \
+            --authenticator dns-duckdns \
+            --dns-duckdns-token "$DUCKDNS_TOKEN" \
+            --dns-duckdns-propagation-seconds 60 \
+            --config-dir ./letsencrypt \
+            --work-dir ./letsencrypt-work \
+            --logs-dir ./letsencrypt-logs \
+            --cert-name telemetry \
+            ${{ inputs.force && '--force-renewal' || '' }} \
+            -d "$HOSTNAME"
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Upload to the telemetry config share
+        env:
+          STORAGE_ACCOUNT: ${{ vars.STORAGE_ACCOUNT_NAME }}
+          SHARE: ${{ vars.TELEMETRY_CONFIG_SHARE || 'telemetry-config' }}
+        run: |
+          # fleet-telemetry reads these paths from the mounted share; names must match config.json.
+          for pair in "fullchain.pem:server-cert.pem" "privkey.pem:server-key.pem"; do
+            src="./letsencrypt/live/telemetry/${pair%%:*}"
+            dest="${pair##*:}"
+            az storage file upload \
+              --account-name "$STORAGE_ACCOUNT" \
+              --share-name "$SHARE" \
+              --source "$src" \
+              --path "$dest" \
+              --auth-mode key \
+              --only-show-errors
+            echo "Uploaded $dest"
+          done
+
+      - name: Restart the telemetry container app
+        env:
+          RESOURCE_GROUP: ${{ vars.RESOURCE_GROUP }}
+          APP_NAME: ${{ vars.TELEMETRY_APP_NAME }}
+        run: |
+          # The certificate is read at startup, so a new revision is what actually picks it up.
+          if [[ -z "$APP_NAME" ]]; then
+            echo "::warning::TELEMETRY_APP_NAME not set; skipping restart. The new certificate is on the share but not yet in use."
+            exit 0
+          fi
+          az containerapp revision restart \
+            --name "$APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --revision "$(az containerapp show -n "$APP_NAME" -g "$RESOURCE_GROUP" --query 'properties.latestRevisionName' -o tsv)" \
+            --only-show-errors
+
+      - name: Report expiry
+        run: |
+          expiry=$(openssl x509 -enddate -noout -in ./letsencrypt/live/telemetry/fullchain.pem | cut -d= -f2)
+          {
+            echo "### Telemetry certificate"
+            echo
+            echo "- Host: \`${{ vars.TELEMETRY_HOSTNAME }}\`"
+            echo "- Valid until: $expiry"
+          } >> "$GITHUB_STEP_SUMMARY"

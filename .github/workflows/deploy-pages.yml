@@ -1,0 +1,66 @@
+name: Deploy public key site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - '.github/workflows/deploy-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Publish
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write CNAME
+        # The custom domain lives in a repository variable so it is not duplicated between the
+        # site and the Bicep parameters.
+        run: |
+          domain="${{ vars.TESLA_APP_DOMAIN }}"
+          if [[ -z "$domain" ]]; then
+            echo "::error::Set the TESLA_APP_DOMAIN repository variable (e.g. evsolar.duckdns.org)."
+            exit 1
+          fi
+          echo "$domain" > site/CNAME
+          echo "Publishing to $domain"
+
+      - name: Guard against a leaked private key
+        # A private key here would be served to the public internet, so fail loudly rather than
+        # relying on .gitignore alone.
+        run: |
+          if grep -rlE "BEGIN (EC |RSA |OPENSSH )?PRIVATE KEY" site/; then
+            echo "::error::A private key is present under site/. Refusing to publish."
+            exit 1
+          fi
+          echo "No private key material found."
+
+      - name: Warn if the public key is missing
+        run: |
+          key=site/.well-known/appspecific/com.tesla.3p.public-key.pem
+          if [[ ! -f "$key" ]]; then
+            echo "::warning::$key is not present yet — Tesla virtual-key pairing will fail until it is."
+          fi
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

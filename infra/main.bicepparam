@@ -35,7 +35,17 @@ param deployContainerApps = false
 param bridgeImage = ''
 param teslaProxyImage = ''
 
-// Flip to true once a domain is available to host the Tesla third-party public key.
+// Free DuckDNS hostname. Its A record points at the telemetryStaticIp deployment output, and the
+// "Renew telemetry certificate" workflow issues a Let's Encrypt certificate for it over DNS-01.
+param telemetryHostname = ''
+
+// Not 443: externally exposed TCP ports must be unique across the Container Apps environment, and
+// the command proxy's HTTP ingress already holds 80/443. Register this port in fleet_telemetry_config.
+param telemetryPort = 8443
+
+// APIM is off and expected to stay off. It was originally intended to terminate mTLS for telemetry,
+// which turned out not to be possible (see docs/ARCHITECTURE-DECISIONS.md), and the only remaining
+// job — serving one static public key — is handled free by GitHub Pages.
 param deployApim = false
 param apimPublisherEmail = ''
 param apimCustomDomainName = ''

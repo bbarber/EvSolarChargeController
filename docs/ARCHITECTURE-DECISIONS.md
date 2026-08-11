@@ -14,6 +14,12 @@ Everything else in the spec was implemented as specified.
 validates the client certificate against Tesla's CA, and forwards the body to an HTTP-triggered
 Function.
 
+**The reasoning behind that was sound.** APIM Consumption really does support client certificate
+authentication — Microsoft's
+[tier comparison](https://learn.microsoft.com/en-us/azure/api-management/api-management-features)
+lists it as ✔️ for Consumption, unlike App Service, which needs a paid plan. For an HTTP API, this
+would have worked exactly as designed. It fails only because Fleet Telemetry is not an HTTP API.
+
 **What is actually true:** Tesla Fleet Telemetry is not request/response HTTP. Vehicles open a
 long-lived **WebSocket** connection and stream binary frames over it. In Tesla's server
 ([`server/streaming/server.go`](https://github.com/teslamotors/fleet-telemetry/blob/main/server/streaming/server.go)):
@@ -33,6 +39,22 @@ forwards a header cannot work, and Tesla's own Helm chart accordingly uses ingre
 **passthrough**. An HTTP-triggered Function is not a WebSocket server and cannot be the endpoint
 regardless.
 
+Two independent blockers rule APIM out, in order of decisiveness:
+
+1. **Consumption does not support WebSocket APIs at all.** The
+   [WebSocket API docs](https://learn.microsoft.com/en-us/azure/api-management/websocket-api) are
+   headed *"APPLIES TO: Developer | Basic | Basic v2 | Standard | Standard v2 | Premium | Premium v2"*
+   — Consumption is absent — and the Limitations section states plainly: *"WebSocket APIs aren't
+   supported yet in the Consumption tier."* There is no API to attach a certificate policy to, so
+   the question of CA validation versus thumbprint pinning never arises.
+2. **Even a paid tier would not help.** APIM does WebSocket *passthrough* by establishing a second,
+   separate connection to the backend. fleet-telemetry reads the peer certificate off its own TLS
+   state, and on that second hop there is none.
+
+It is also worth being precise about who connects: per Tesla's README, *"Vehicles will connect and
+stream data directly to the hosted fleet-telemetry server."* Each car presents its own client
+certificate. There is no single Tesla-owned client certificate whose thumbprint could be pinned.
+
 **What was built instead:** Tesla's `fleet-telemetry` server runs in Azure Container Apps, in a
 VNet-integrated environment with **TCP ingress** so the handshake reaches the container untouched.
 
@@ -50,18 +72,30 @@ header. All the ingest logic, override detection and storage behaviour are uncha
 - One always-on Container Apps replica (vehicles hold persistent connections, so it cannot scale to
   zero). This sits inside the Container Apps monthly free grant at this scale, but it is no longer
   "serverless".
-- A VNet, required for TCP ingress.
-- A publicly trusted TLS certificate for the telemetry FQDN, which must be renewed. Container Apps'
-  free managed certificates do **not** apply to TCP ingress.
+- A VNet. Confirmed required:
+  [*"External TCP ingress is only supported for Container Apps environments that use a virtual
+  network."*](https://learn.microsoft.com/en-us/azure/container-apps/ingress-overview)
+- A TLS certificate we issue and rotate ourselves. Azure's free managed certificates
+  [require HTTP ingress](https://learn.microsoft.com/en-us/azure/container-apps/custom-domains-certificates)
+  — the setup flow explicitly says to set the ingress type to HTTP, and DigiCert has to reach the
+  app to validate it. Under TCP passthrough Azure never sees the handshake, so it cannot supply a
+  certificate.
+- **Not** a purchased domain. A free DuckDNS hostname plus a Let's Encrypt certificate issued over
+  DNS-01 satisfies this at no cost; `.github/workflows/renew-telemetry-cert.yml` renews weekly and
+  restarts the app. DNS-01 rather than HTTP-01 because nothing answers HTTP on that hostname.
 
-**Unvalidated:** external TCP ingress on a VNet-integrated Container Apps environment is configured
-per Microsoft's documentation but has not been deployed. If it turns out not to be available, the
-fallback is a small always-on VM with the same container, which would leave the free tier.
+**Port 8443, not 443.** Externally exposed TCP ports must be unique across the entire Container
+Apps environment, *"including… 80/443 ports used by built-in HTTP ingress"* — which the command
+proxy occupies. `fleet_telemetry_config` takes an explicit port, so the vehicles are registered
+against 8443.
 
-**APIM's remaining role:** hosting the Tesla third-party public key at
-`/.well-known/appspecific/com.tesla.3p.public-key.pem` on a custom domain — a genuine prerequisite
-for virtual-key pairing, served inside the Consumption tier's free allotment. It is off by default
-(`deployApim = false`) since it needs a domain.
+**Unvalidated:** external TCP ingress is configured per Microsoft's documentation but has not been
+deployed yet. If it proves unavailable, the fallback is a small always-on VM running the same
+container, which would leave the free tier.
+
+**APIM was removed entirely.** Its remaining job would have been serving one static public key.
+GitHub Pages does that free, with automatic certificate management and no Azure resource — see
+`site/`. The module is still in the tree behind `deployApim = false` in case a future need appears.
 
 ---
 
@@ -122,8 +156,12 @@ over a month requires a fresh authorization.
 1. **Service voltage.** The watts → amps conversion assumes 240V split-phase, the common US
    residential case. If the service is anything else, `Charging__SystemVoltage` needs changing;
    every target current scales directly with it.
-2. **A domain name.** Needed for the telemetry FQDN and for hosting the Tesla public key. Nothing
-   in the Tesla path can be registered without one.
+2. ~~**A domain name.**~~ **Resolved** — free DuckDNS hostnames. Two are needed, because a DuckDNS
+   name carries a single A record and the two endpoints resolve to different addresses:
+   `evsolarchargecontroller.duckdns.org` → GitHub Pages (public key), and a second name →
+   the Container Apps environment IP (telemetry). DuckDNS supports TXT records, which is what makes
+   the DNS-01 certificate flow possible; it does **not** support CNAME, which is why the public key
+   is hosted on GitHub Pages via A record rather than on a service that requires CNAME validation.
 3. **`ChargeAmps` vs `ChargeCurrentRequest`.** Both are subscribed; `ChargeAmps` is preferred with
    the other as fallback. Which one actually tracks the app's slider should be confirmed against a
    real vehicle before trusting override detection — this is the most likely source of false

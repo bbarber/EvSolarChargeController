@@ -65,6 +65,12 @@ param bridgeImage string = ''
 @description('Container image for the Tesla vehicle-command HTTP proxy.')
 param teslaProxyImage string = ''
 
+@description('Public hostname vehicles stream telemetry to, e.g. evsolar-tel.duckdns.org. Informational here; it must match the certificate on the config share and the fleet_telemetry_config registered on each vehicle.')
+param telemetryHostname string = ''
+
+@description('External TCP port for telemetry. Not 443, which the command proxy\'s HTTP ingress already occupies in the same environment.')
+param telemetryPort int = 8443
+
 @description('Deploy API Management to host the Tesla third-party public key on a custom domain.')
 param deployApim bool = false
 
@@ -136,6 +142,7 @@ module containerApps 'modules/containerapps.bicep' = if (deployContainerApps) {
     storageAccountName: storage.outputs.storageAccountName
     bridgeImage: bridgeImage
     teslaProxyImage: teslaProxyImage
+    telemetryPort: telemetryPort
     ingestUrl: 'https://${functionAppName}.azurewebsites.net/api/telemetry'
     ingestSharedSecret: ingestSharedSecret
     proxySharedSecret: proxySharedSecret
@@ -212,10 +219,18 @@ output telemetryFqdn string = containerApps.?outputs.telemetryFqdn ?? ''
 output teslaCommandProxyUrl string = containerApps.?outputs.proxyBaseUrl ?? ''
 output teslaPublicKeyUrl string = apim.?outputs.publicKeyUrl ?? ''
 
+@description('Point the DuckDNS A record for the telemetry hostname here.')
+output telemetryStaticIp string = containerApps.?outputs.environmentStaticIp ?? ''
+
+@description('Port to register in fleet_telemetry_config.')
+output telemetryPort int = telemetryPort
+
 @description('Reminder of the manual steps Bicep cannot express.')
 output nextSteps array = [
   'Seed secrets: ./tools/seed-keyvault.sh ${keyVault.outputs.keyVaultName}'
   'Deploy function code: func azure functionapp publish ${functionApp.outputs.functionAppName}'
   'Complete the Tesla and Enphase OAuth flows, then re-run the seed script'
-  'Register fleet_telemetry_config on each vehicle once the telemetry endpoint is live'
+  'Point the DuckDNS A record for ${empty(telemetryHostname) ? '<telemetry hostname>' : telemetryHostname} at the telemetryStaticIp output'
+  'Run the "Renew telemetry certificate" workflow to issue the first certificate'
+  'Register fleet_telemetry_config on each vehicle with port ${telemetryPort}'
 ]
