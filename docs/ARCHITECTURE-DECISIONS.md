@@ -69,9 +69,21 @@ header. All the ingest logic, override detection and storage behaviour are uncha
 
 **What it costs:**
 
-- One always-on Container Apps replica (vehicles hold persistent connections, so it cannot scale to
-  zero). This sits inside the Container Apps monthly free grant at this scale, but it is no longer
-  "serverless".
+- **Real money: roughly $11–18/month.** One always-on Container Apps replica, because vehicles hold
+  persistent connections and cannot be served by something that scales to zero. An earlier version
+  of this document claimed it fit the Container Apps free grant. That was wrong. The grant is
+  [180,000 vCPU-s and 360,000 GiB-s per month](https://azure.microsoft.com/en-us/pricing/details/container-apps/),
+  and a replica running for 30 days consumes 2,592,000 seconds of wall clock — so the grant covers
+  **0.069 vCPU running continuously**, against a platform minimum of 0.25 vCPU. No always-on
+  container app can be free, at any size.
+
+  Options if that matters: stop the app outside the 09:00–18:00 window (roughly a 60% cut, since
+  charging decisions only happen in daylight), or drop pushed telemetry entirely — which is not
+  really an option, because the alternative is polling, and polling wakes a sleeping vehicle.
+
+  This constraint was unsatisfiable from the outset: "everything free" and "push telemetry, never
+  poll" cannot both hold. It should have been caught when Container Apps was chosen, not after
+  deployment.
 - A VNet. Confirmed required:
   [*"External TCP ingress is only supported for Container Apps environments that use a virtual
   network."*](https://learn.microsoft.com/en-us/azure/container-apps/ingress-overview)
@@ -89,9 +101,10 @@ Apps environment, *"including… 80/443 ports used by built-in HTTP ingress"* �
 proxy occupies. `fleet_telemetry_config` takes an explicit port, so the vehicles are registered
 against 8443.
 
-**Unvalidated:** external TCP ingress is configured per Microsoft's documentation but has not been
-deployed yet. If it proves unavailable, the fallback is a small always-on VM running the same
-container, which would leave the free tier.
+**Validated.** Deployed and confirmed working: the endpoint completes a TLSv1.3 handshake on
+port 8443 from the public internet, presenting the Let's Encrypt certificate the container serves
+itself. External TCP ingress on a VNet-integrated Container Apps environment does what the design
+assumed.
 
 **APIM was removed entirely.** Its remaining job would have been serving one static public key.
 GitHub Pages does that free, with automatic certificate management and no Azure resource — see

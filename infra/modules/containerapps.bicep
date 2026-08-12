@@ -187,9 +187,12 @@ resource telemetryApp 'Microsoft.App/containerApps@2024-03-01' = {
           //   ["/fleet-telemetry", "-config", "/etc/fleet-telemetry/config.json"]
           // and Container Apps' `args` replaces the command rather than appending to it, so an
           // override here gets exec'd as the binary itself.
+          // Platform minimum. This replica bills 24/7 and the free grant covers only ~0.069 vCPU
+          // continuously, so every fraction above the floor is money. One or two vehicles sending
+          // a handful of signals a minute does not need more.
           resources: {
-            cpu: json('0.5')
-            memory: '1Gi'
+            cpu: json('0.25')
+            memory: '0.5Gi'
           }
           volumeMounts: [
             {
