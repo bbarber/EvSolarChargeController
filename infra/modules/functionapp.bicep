@@ -155,6 +155,11 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           // No WEBSITE_RUN_FROM_PACKAGE here on purpose. On the Linux Consumption plan it must be a
           // blob URL rather than '1', and setting it to '1' makes zip deployment fail with an
           // opaque "Bad Request". The deployment tooling sets the correct value itself.
+          //
+          // IMPORTANT: siteConfig.appSettings replaces the entire collection, so deploying this
+          // template removes the WEBSITE_RUN_FROM_PACKAGE that zip deployment added, and the app
+          // comes back with zero functions loaded. Always redeploy the function code after an
+          // infrastructure deploy — the deploy-infra workflow chains into it for this reason.
           {
             name: 'WEBSITE_TIME_ZONE'
             value: timeZone

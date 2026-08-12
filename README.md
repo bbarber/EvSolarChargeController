@@ -129,8 +129,21 @@ cd src/EvSolarChargeController.Functions && func start
 ```bash
 az deployment group create -g rg-evsolar-prod -f infra/main.bicep -p infra/main.bicepparam
 ./tools/seed-keyvault.sh <key-vault-name>
-func azure functionapp publish <function-app-name>
+
+# Always redeploy the code after an infrastructure deploy — see the note below.
+dotnet publish src/EvSolarChargeController.Functions -c Release -o ./publish
+cd publish && zip -qr ../app.zip . && cd ..
+az functionapp deployment source config-zip -g rg-evsolar-prod -n <function-app-name> --src app.zip
 ```
+
+> **Infrastructure deploys wipe the code pointer.** Bicep's `siteConfig.appSettings` replaces the
+> whole settings collection, which removes the `WEBSITE_RUN_FROM_PACKAGE` value that zip deployment
+> sets. The app then starts cleanly with **zero functions loaded** and no obvious error. Redeploying
+> the code restores it.
+>
+> `func azure functionapp publish` does not work from the project directory here: the generated
+> `obj/.../WorkerExtensions.csproj` makes it see two projects and refuse. Publish with `dotnet` and
+> deploy the zip instead.
 
 Or use the `Deploy infrastructure` and `Deploy functions` GitHub Actions workflows, which
 authenticate with OIDC federated credentials rather than stored secrets.
