@@ -183,9 +183,10 @@ resource telemetryApp 'Microsoft.App/containerApps@2024-03-01' = {
         {
           name: 'fleet-telemetry'
           image: fleetTelemetryImage
-          args: [
-            '-config=/etc/fleet-telemetry/config.json'
-          ]
+          // No command/args override. The image already runs
+          //   ["/fleet-telemetry", "-config", "/etc/fleet-telemetry/config.json"]
+          // and Container Apps' `args` replaces the command rather than appending to it, so an
+          // override here gets exec'd as the binary itself.
           resources: {
             cpu: json('0.5')
             memory: '1Gi'
