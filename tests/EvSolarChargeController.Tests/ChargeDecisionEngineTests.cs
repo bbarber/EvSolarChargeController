@@ -111,11 +111,14 @@ public class ChargeDecisionEngineTests
     }
 
     [Fact]
-    public void Clamps_up_to_the_minimum_when_production_is_low()
+    public void Stops_instead_of_clamping_up_when_production_cannot_cover_the_minimum()
     {
+        // Clamping 0.7A up to the 5A minimum would pull the remaining ~1kW from the grid.
+        // See LowSolarTests for the full stop/resume behaviour.
         var decision = ChargeDecisionEngine.Decide(Vehicle(), maxAmpsLastHour: 0.7, Options(), Now);
 
-        decision.TargetAmps.Should().Be(5);
+        decision.Action.Should().Be(ChargeAction.StopChargingLowSolar);
+        decision.TargetAmps.Should().BeNull();
     }
 
     [Fact]

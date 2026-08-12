@@ -17,6 +17,18 @@ public enum ChargeAction
     /// <summary>At or above the SoC cap and already stopped; nothing to do.</summary>
     SkipAtSocCap,
 
+    /// <summary>
+    /// Solar cannot sustain even the minimum charge current. Stop rather than clamp up to the
+    /// minimum, which would draw the shortfall from the grid.
+    /// </summary>
+    StopChargingLowSolar,
+
+    /// <summary>Solar has recovered after we stopped for low production; resume the session.</summary>
+    ResumeCharging,
+
+    /// <summary>Not enough solar to charge, and not currently charging.</summary>
+    SkipInsufficientSolar,
+
     /// <summary>No telemetry has ever arrived for this vehicle, or it is too old to trust.</summary>
     SkipNoVehicleState,
 
@@ -38,13 +50,19 @@ public sealed record ChargeDecision(ChargeAction Action, int? TargetAmps, string
 {
     public bool ShouldSend => Action == ChargeAction.SetAmps;
 
-    public bool ShouldStop => Action == ChargeAction.StopCharging;
+    public bool ShouldStop => Action is ChargeAction.StopCharging or ChargeAction.StopChargingLowSolar;
+
+    public bool ShouldResume => Action == ChargeAction.ResumeCharging;
 
     public static ChargeDecision Skip(ChargeAction action, string reason) => new(action, null, reason);
 
     public static ChargeDecision Set(int amps, string reason) => new(ChargeAction.SetAmps, amps, reason);
 
     public static ChargeDecision Stop(string reason) => new(ChargeAction.StopCharging, null, reason);
+
+    public static ChargeDecision StopLowSolar(string reason) => new(ChargeAction.StopChargingLowSolar, null, reason);
+
+    public static ChargeDecision Resume(int amps, string reason) => new(ChargeAction.ResumeCharging, amps, reason);
 }
 
 /// <summary>
@@ -100,13 +118,6 @@ public static class ChargeDecisionEngine
                 $"{vehicle.Vin} reached {soc}%, at or above the {options.MaxSocPercent}% cap; stopping the charge session.");
         }
 
-        if (!state.IsActivelyCharging())
-        {
-            return ChargeDecision.Skip(
-                ChargeAction.SkipNotCharging,
-                $"{vehicle.Vin} is {state}; not sending any command (avoids waking the vehicle).");
-        }
-
         if (maxAmpsLastHour is not { } amps)
         {
             return ChargeDecision.Skip(
@@ -114,7 +125,45 @@ public static class ChargeDecisionEngine
                 "No solar readings inside the trailing window; leaving amps unchanged.");
         }
 
+        // Whether solar alone can sustain the connector's minimum current. Rounded before the
+        // clamp, because clamping *up* to the minimum is exactly the grid draw we want to avoid.
+        var unclamped = (int)Math.Round(amps, MidpointRounding.AwayFromZero);
+        var solarCoversMinimum = unclamped >= options.MinChargeAmps;
+
+        if (!solarCoversMinimum)
+        {
+            // Taking the maximum over the trailing hour already damps this heavily: a passing
+            // cloud cannot trip it, only a sustained loss of production.
+            if (state.IsActivelyCharging())
+            {
+                return ChargeDecision.StopLowSolar(
+                    $"Solar peaked at {amps:F2}A over the trailing window, below the {options.MinChargeAmps}A minimum; " +
+                    $"stopping {vehicle.Vin} rather than drawing the shortfall from the grid.");
+            }
+
+            return ChargeDecision.Skip(
+                ChargeAction.SkipInsufficientSolar,
+                $"Solar peaked at {amps:F2}A, below the {options.MinChargeAmps}A minimum; leaving {vehicle.Vin} stopped.");
+        }
+
         var target = SolarMath.ToRequestableAmps(amps, options.MinChargeAmps, options.MaxChargeAmps);
+
+        if (!state.IsActivelyCharging())
+        {
+            // Only resume a session this controller stopped for low solar. Anything else that is
+            // not charging is either the user's choice or an asleep vehicle, and a command here
+            // could wake it.
+            if (vehicle.LowSolarStopIssuedAt is not null && state.IsPluggedIn())
+            {
+                return ChargeDecision.Resume(
+                    target,
+                    $"Solar recovered to {amps:F2}A; resuming {vehicle.Vin} at {target}A.");
+            }
+
+            return ChargeDecision.Skip(
+                ChargeAction.SkipNotCharging,
+                $"{vehicle.Vin} is {state}; not sending any command (avoids waking the vehicle).");
+        }
 
         // The car may cap below our configured ceiling (breaker size, on-board charger). Respect
         // whatever it last reported so we stop asking for current it will never accept — otherwise

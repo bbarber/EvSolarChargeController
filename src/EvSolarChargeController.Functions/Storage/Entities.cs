@@ -40,6 +40,12 @@ public sealed class VehicleStateEntity : ITableEntity
     /// </summary>
     public DateTimeOffset? SocStopIssuedAt { get; set; }
 
+    /// <summary>
+    /// When this controller last stopped charging because solar could not cover the minimum
+    /// current. Unlike the SoC cap, this one resumes automatically once production recovers.
+    /// </summary>
+    public DateTimeOffset? LowSolarStopIssuedAt { get; set; }
+
     /// <summary>Serialized <see cref="Domain.ChargingState"/>.</summary>
     public string ChargingState { get; set; } = Domain.ChargingState.Unknown.ToString();
 

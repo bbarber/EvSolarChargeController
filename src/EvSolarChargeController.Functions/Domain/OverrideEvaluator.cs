@@ -77,6 +77,7 @@ public static class OverrideEvaluator
             state.LastSetAmps = null;
             state.LastSetAt = null;
             state.SocStopIssuedAt = null;
+            state.LowSolarStopIssuedAt = null;
         }
         else if (ShouldFlagOverride(state, observation, options, effectiveState))
         {
@@ -99,10 +100,11 @@ public static class OverrideEvaluator
             return false; // Already flagged; nothing to re-evaluate until unplug.
         }
 
-        // We stopped the session at the SoC cap and the car is charging again. Nothing in this
-        // controller restarts a charge, so a person did — hand back control rather than fighting
-        // them by stopping it again every cycle.
-        if (state.SocStopIssuedAt is { } stoppedAt
+        // We stopped the session and the car is charging again while our marker is still set.
+        // A resume by this controller clears the marker first, so reaching here means a person
+        // restarted it — hand back control rather than stopping them again every cycle.
+        var stopMarker = state.SocStopIssuedAt ?? state.LowSolarStopIssuedAt;
+        if (stopMarker is { } stoppedAt
             && effectiveState.IsActivelyCharging()
             && observation.ObservedAt - stoppedAt >= options.OverrideSettleWindow)
         {

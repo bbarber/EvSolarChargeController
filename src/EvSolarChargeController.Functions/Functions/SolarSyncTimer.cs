@@ -94,7 +94,14 @@ public sealed class SolarSyncTimer
         if (decision.ShouldStop)
         {
             _logger.LogInformation("{Reason}", decision.Reason);
-            await StopChargingAsync(vehicle!, now, cancellationToken);
+            await StopChargingAsync(vehicle!, decision.Action, now, cancellationToken);
+            return;
+        }
+
+        if (decision.ShouldResume)
+        {
+            _logger.LogInformation("{Reason}", decision.Reason);
+            await ResumeChargingAsync(vehicle!, decision.TargetAmps!.Value, now, cancellationToken);
             return;
         }
 
@@ -133,7 +140,11 @@ public sealed class SolarSyncTimer
     /// Ends the charge session at the state-of-charge cap and records that we did so, which is what
     /// lets a later manual restart be recognised as an override rather than fought every cycle.
     /// </summary>
-    private async Task StopChargingAsync(VehicleStateEntity vehicle, DateTimeOffset now, CancellationToken cancellationToken)
+    private async Task StopChargingAsync(
+        VehicleStateEntity vehicle,
+        ChargeAction action,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
         var result = await _tesla.StopChargingAsync(vehicle.Vin, cancellationToken);
 
@@ -147,7 +158,17 @@ public sealed class SolarSyncTimer
             vehicle.Vin,
             state =>
             {
-                state.SocStopIssuedAt = now;
+                // Which marker is set decides whether we ever resume: low solar recovers on its
+                // own, the state-of-charge cap does not.
+                if (action == ChargeAction.StopChargingLowSolar)
+                {
+                    state.LowSolarStopIssuedAt = now;
+                }
+                else
+                {
+                    state.SocStopIssuedAt = now;
+                }
+
                 // Forget our amp setting: the next session starts fresh, and keeping a stale value
                 // would make the first telemetry frame of that session look like an override.
                 state.LastSetAmps = null;
@@ -157,7 +178,60 @@ public sealed class SolarSyncTimer
             now,
             cancellationToken);
 
-        _logger.LogInformation("Charging stopped for {Vin} at the state-of-charge cap.", vehicle.Vin);
+        _logger.LogInformation("Charging stopped for {Vin} ({Action}).", vehicle.Vin, action);
+    }
+
+    /// <summary>
+    /// Restarts a session we stopped for low solar, then sets the amps to match current production.
+    /// </summary>
+    private async Task ResumeChargingAsync(
+        VehicleStateEntity vehicle,
+        int amps,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var start = await _tesla.StartChargingAsync(vehicle.Vin, cancellationToken);
+        if (!start.Success)
+        {
+            _logger.LogError("charge_start failed for {Vin}: {Error}", vehicle.Vin, start.Error);
+            return;
+        }
+
+        // Clear the marker on the start alone. If the amp call below fails the session is still
+        // running, and leaving the marker set would make the next cycle try to resume again.
+        await _vehicles.MutateAsync(
+            vehicle.Vin,
+            state =>
+            {
+                state.LowSolarStopIssuedAt = null;
+                return state;
+            },
+            now,
+            cancellationToken);
+
+        var setAmps = await _tesla.SetChargingAmpsAsync(vehicle.Vin, amps, cancellationToken);
+        if (!setAmps.Success)
+        {
+            _logger.LogError(
+                "Resumed {Vin} but set_charging_amps to {Amps}A failed: {Error}. The next cycle will retry.",
+                vehicle.Vin,
+                amps,
+                setAmps.Error);
+            return;
+        }
+
+        await _vehicles.MutateAsync(
+            vehicle.Vin,
+            state =>
+            {
+                state.LastSetAmps = amps;
+                state.LastSetAt = now;
+                return state;
+            },
+            now,
+            cancellationToken);
+
+        _logger.LogInformation("Charging resumed for {Vin} at {Amps}A.", vehicle.Vin, amps);
     }
 
     /// <summary>Polls Enphase and banks the reading. Returns null when the cycle should be skipped.</summary>

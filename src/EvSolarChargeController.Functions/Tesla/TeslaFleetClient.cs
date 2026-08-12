@@ -31,6 +31,12 @@ public interface ITeslaFleetClient
     /// controller never charges past it regardless of the limit configured on the vehicle.
     /// </summary>
     Task<CommandResult> StopChargingAsync(string vin, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Resumes a charge session this controller previously stopped for low solar production.
+    /// Only ever called for a plugged-in vehicle that is awake and reporting telemetry.
+    /// </summary>
+    Task<CommandResult> StartChargingAsync(string vin, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -80,6 +86,9 @@ public sealed class TeslaFleetClient : ITeslaFleetClient
 
     public Task<CommandResult> StopChargingAsync(string vin, CancellationToken cancellationToken = default) =>
         SendCommandAsync(vin, "charge_stop", new { }, "charge_stop", cancellationToken);
+
+    public Task<CommandResult> StartChargingAsync(string vin, CancellationToken cancellationToken = default) =>
+        SendCommandAsync(vin, "charge_start", new { }, "charge_start", cancellationToken);
 
     private async Task<CommandResult> SendCommandAsync(
         string vin,
