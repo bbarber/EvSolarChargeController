@@ -43,7 +43,7 @@ Azure Container Apps ── fleet-telemetry (Tesla's server, terminates mTLS)
                                             • ApiUsage       (monthly call counter)
                                                ▲
                                                │
-Enphase cloud ◀── Azure Function: SolarSyncTimer (every 20 min, 09:00–19:00 America/Chicago)
+Enphase cloud ◀── Azure Function: SolarSyncTimer (every 20 min, 09:00–18:00 America/Chicago)
                                                │
                                                ▼
                      Container Apps ── tesla-http-proxy (signs commands)
@@ -85,7 +85,7 @@ out. Three details keep that from misfiring:
 ## Rate limits
 
 The Enphase free "Watt" plan allows 10 calls/minute and **1000 calls/month**. At 3 calls/hour
-across a 10-hour window, a 31-day month costs 930 calls. That is a thin margin, so:
+across a 9-hour window, a 31-day month costs 837 calls. That is a thin margin, so:
 
 - Every call is counted in the `ApiUsage` table and logged with its running total.
 - A configurable budget (`Enphase:MonthlyCallBudget`, default 950) hard-stops polling before the
@@ -151,7 +151,7 @@ Settings bind from app settings using `Section__Key` naming.
 | `Charging__LookbackWindow` | 60 min | Trailing window for the max |
 | `Charging__OverrideSettleWindow` | 3 min | Grace period after our own command |
 | `PollingWindow__TimeZone` | America/Chicago | Interprets the window hours |
-| `PollingWindow__StartHourLocal` / `EndHourLocal` | 9 / 19 | Daylight window |
+| `PollingWindow__StartHourLocal` / `EndHourLocal` | 9 / 18 | Daylight window |
 | `Enphase__MonthlyCallBudget` | 950 | Hard stop below the 1000/month cap |
 | `Tesla__CommandMode` | Proxy | `Direct` only works for pre-2021 S/X |
 

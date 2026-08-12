@@ -11,7 +11,7 @@ public class PollingWindowTests
     {
         TimeZone = "America/Chicago",
         StartHourLocal = 9,
-        EndHourLocal = 19,
+        EndHourLocal = 18,
     });
 
     [Fact]
@@ -31,15 +31,23 @@ public class PollingWindowTests
     [Fact]
     public void Open_at_the_last_fire_of_the_day()
     {
-        // 18:40 CDT = 23:40 UTC — the final :40 fire, still before the 19:00 cutoff.
-        Window().IsOpen(new DateTimeOffset(2026, 8, 11, 23, 40, 0, TimeSpan.Zero)).Should().BeTrue();
+        // 17:40 CDT = 22:40 UTC — the final :40 fire, still before the 18:00 cutoff.
+        Window().IsOpen(new DateTimeOffset(2026, 8, 11, 22, 40, 0, TimeSpan.Zero)).Should().BeTrue();
     }
 
     [Fact]
     public void Closed_at_the_end_boundary()
     {
-        // 19:00 CDT = 00:00 UTC next day.
-        Window().IsOpen(new DateTimeOffset(2026, 8, 12, 0, 0, 0, TimeSpan.Zero)).Should().BeFalse();
+        // 18:00 CDT = 23:00 UTC. The sun is effectively down; nothing left to track.
+        Window().IsOpen(new DateTimeOffset(2026, 8, 11, 23, 0, 0, TimeSpan.Zero)).Should().BeFalse();
+    }
+
+    [Fact]
+    public void The_cron_schedule_agrees_with_the_configured_window()
+    {
+        // The NCRONTAB hour range and the in-code window must not drift apart: the cron decides
+        // when we fire, the window decides whether we spend an Enphase call.
+        global::EvSolarChargeController.Functions.Functions.SolarSyncTimer.Schedule.Should().Be("0 0,20,40 9-17 * * *");
     }
 
     [Fact]

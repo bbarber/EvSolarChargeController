@@ -15,7 +15,7 @@ namespace EvSolarChargeController.Functions.Functions;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Runs every 20 minutes inside the daylight window only: 3/hour x 10 hours x 31 days = 930 calls,
+/// Runs every 20 minutes inside the daylight window only: 3/hour x 9 hours x 31 days = 837 calls,
 /// under the Enphase Watt plan's 1000/month cap. Failures are never retried within a run — a
 /// skipped cycle costs nothing, but a retry storm can blow the monthly budget.
 /// </para>
@@ -26,8 +26,9 @@ namespace EvSolarChargeController.Functions.Functions;
 /// </remarks>
 public sealed class SolarSyncTimer
 {
-    // :00, :20, :40 from 09:00 through 18:40 local — the last fire is before the 19:00 cutoff.
-    public const string Schedule = "0 0,20,40 9-18 * * *";
+    // :00, :20, :40 from 09:00 through 17:40 local — the last fire is before the 18:00 cutoff,
+    // by which point the sun is down and there is nothing to track.
+    public const string Schedule = "0 0,20,40 9-17 * * *";
 
     private readonly IEnphaseClient _enphase;
     private readonly ISolarReadingsRepository _readings;

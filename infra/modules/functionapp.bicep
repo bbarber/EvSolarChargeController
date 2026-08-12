@@ -40,7 +40,7 @@ param maxChargeAmps int = 16
 param pollingStartHourLocal int = 9
 
 @description('Hour the polling window closes, local time, exclusive.')
-param pollingEndHourLocal int = 19
+param pollingEndHourLocal int = 18
 
 @description('Ceiling on Enphase calls per calendar month. The Watt plan allows 1000.')
 param enphaseMonthlyCallBudget int = 950

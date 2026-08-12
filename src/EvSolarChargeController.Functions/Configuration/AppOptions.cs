@@ -76,7 +76,9 @@ public sealed class PollingWindowOptions
 
     public string TimeZone { get; set; } = "America/Chicago";
     public int StartHourLocal { get; set; } = 9;
-    public int EndHourLocal { get; set; } = 19;
+
+    /// <summary>Exclusive. 18 means the last poll is at 17:40 local, since the sun is down after 18:00.</summary>
+    public int EndHourLocal { get; set; } = 18;
 }
 
 /// <summary>How vehicle commands reach the car.</summary>

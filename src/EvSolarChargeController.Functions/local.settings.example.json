@@ -11,7 +11,7 @@
 
     "PollingWindow__TimeZone": "America/Chicago",
     "PollingWindow__StartHourLocal": "9",
-    "PollingWindow__EndHourLocal": "19",
+    "PollingWindow__EndHourLocal": "18",
 
     "Enphase__ClientId": "",
     "Enphase__ClientSecret": "",

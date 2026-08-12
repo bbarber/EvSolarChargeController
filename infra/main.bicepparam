@@ -18,9 +18,9 @@ param minChargeAmps = 5
 param maxChargeAmps = 16
 
 param pollingStartHourLocal = 9
-param pollingEndHourLocal = 19
+param pollingEndHourLocal = 18
 
-// 3 calls/hour x 10 hours x 31 days = 930. The Watt plan allows 1000/month.
+// 3 calls/hour x 9 hours x 31 days = 837. The Watt plan allows 1000/month.
 param enphaseMonthlyCallBudget = 950
 
 param teslaFleetApiBaseUrl = 'https://fleet-api.prd.na.vn.cloud.tesla.com'
