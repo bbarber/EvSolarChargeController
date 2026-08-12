@@ -37,8 +37,8 @@ value just has to match what is registered on the vehicle.
 ''')
 param telemetryPort int = 8443
 
-@description('Container image for Tesla fleet-telemetry.')
-param fleetTelemetryImage string = 'tesla/fleet-telemetry:v0.7.0'
+@description('Container image for Tesla fleet-telemetry. Pinned rather than :latest so a vehicle-facing server never changes underneath us unannounced.')
+param fleetTelemetryImage string = 'tesla/fleet-telemetry:v0.9.4'
 
 @description('Container image for the ZMQ -> HTTP bridge, built from src/EvSolarChargeController.TelemetryBridge.')
 param bridgeImage string

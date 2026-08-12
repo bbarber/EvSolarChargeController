@@ -6,14 +6,13 @@
   ],
 
   "host": "0.0.0.0",
-  "port": 443,
+  "port": 8443,
   "log_level": "info",
   "json_log_enable": true,
   "namespace": "evsolar",
 
   "tls": {
-    "_comment": "mTLS terminates here. ca_file must be Tesla's telemetry CA so the server can verify the vehicle's client certificate; server_cert/server_key must be a publicly trusted certificate for the FQDN registered in fleet_telemetry_config.",
-    "ca_file": "/etc/fleet-telemetry/tesla-ca.pem",
+    "_comment": "mTLS terminates here. ca_file is deliberately omitted: fleet-telemetry embeds Tesla's production CA (//go:embed files/prod_ca.crt) and uses it by default, so there is no CA file to fetch or keep current. server_cert/server_key must be a publicly trusted certificate for the hostname registered in fleet_telemetry_config — issued by the renew-telemetry-cert workflow.",
     "server_cert": "/etc/fleet-telemetry/server-cert.pem",
     "server_key": "/etc/fleet-telemetry/server-key.pem"
   },

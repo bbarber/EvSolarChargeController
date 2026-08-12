@@ -35,13 +35,13 @@ param vins = [
 
 // Flip to true once the container images have been built and pushed by the CI workflow, and the
 // certificate/config share has been seeded.
-param deployContainerApps = false
-param bridgeImage = ''
-param teslaProxyImage = ''
+param deployContainerApps = true
+param bridgeImage = 'ghcr.io/bbarber/evsolarchargecontroller/telemetry-bridge:latest'
+param teslaProxyImage = 'ghcr.io/bbarber/evsolarchargecontroller/tesla-command-proxy:latest'
 
 // Free DuckDNS hostname. Its A record points at the telemetryStaticIp deployment output, and the
 // "Renew telemetry certificate" workflow issues a Let's Encrypt certificate for it over DNS-01.
-param telemetryHostname = ''
+param telemetryHostname = 'evsolarchargecontroller-tel.duckdns.org'
 
 // Not 443: externally exposed TCP ports must be unique across the Container Apps environment, and
 // the command proxy's HTTP ingress already holds 80/443. Register this port in fleet_telemetry_config.
