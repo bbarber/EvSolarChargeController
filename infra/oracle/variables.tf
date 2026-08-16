@@ -72,8 +72,15 @@ variable "telemetry_port" {
   default     = 8443
 }
 
-variable "proxy_port" {
-  description = "Port the tesla-http-proxy listens on, for whatever ends up running the control loop."
+variable "public_key_port" {
+  description = <<-EOT
+    Serves /.well-known/appspecific/com.tesla.3p.public-key.pem over HTTPS.
+
+    This has to live on the same host as telemetry: Tesla rejects a fleet_telemetry_config whose
+    hostname is not under the domain the partner account is registered with ("hostname domain does
+    not match with partner account"), and a DuckDNS name carries a single A record. So one name
+    must serve both the key on 443 and telemetry on 8443.
+  EOT
   type        = number
-  default     = 4443
+  default     = 443
 }

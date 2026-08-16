@@ -84,13 +84,15 @@ resource "oci_core_security_list" "public" {
     }
   }
 
+  # Tesla fetches the application's public key from here before it will pair a virtual key or
+  # accept a telemetry configuration.
   ingress_security_rules {
     protocol    = "6"
     source      = "0.0.0.0/0"
-    description = "tesla-http-proxy (TLS + shared secret)"
+    description = "Tesla third-party public key over HTTPS"
     tcp_options {
-      min = var.proxy_port
-      max = var.proxy_port
+      min = var.public_key_port
+      max = var.public_key_port
     }
   }
 
@@ -160,14 +162,28 @@ resource "oci_core_instance" "telemetry" {
   metadata = {
     ssh_authorized_keys = var.ssh_public_key
     user_data = base64encode(templatefile("${path.module}/cloud-init.yaml", {
-      telemetry_port = var.telemetry_port
-      proxy_port     = var.proxy_port
+      telemetry_port  = var.telemetry_port
+      public_key_port = var.public_key_port
     }))
   }
 
   # The public IP is ephemeral, which is what the Always Free VNIC includes. It survives reboots
   # and stops/starts, but destroying and recreating the instance issues a new one — at which
-  # point the DuckDNS A record has to be updated to match. The hostname registered in
-  # fleet_telemetry_config never changes, so the vehicles do not need re-registering.
+  # point the DuckDNS A record has to be updated to match.
   preserve_boot_volume = false
+
+  lifecycle {
+    # This instance is only obtainable when Oracle happens to have spare Always Free A1 capacity,
+    # which took 71 launch attempts the first time. Terraform must never destroy it to satisfy a
+    # config change.
+    prevent_destroy = true
+
+    # Both of these force replacement when they change, and neither is worth an instance for:
+    # cloud-init only runs on first boot, so editing it cannot affect a live host anyway, and
+    # source_id moves every time Canonical publishes a new image.
+    ignore_changes = [
+      metadata["user_data"],
+      source_details[0].source_id,
+    ]
+  }
 }

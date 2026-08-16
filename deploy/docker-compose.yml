@@ -24,6 +24,23 @@ services:
     networks:
       - evsolar
 
+  # Tesla will not pair a virtual key or accept a telemetry configuration unless it can fetch the
+  # application's public key over HTTPS from the partner-registered domain — which, because that
+  # domain must also carry telemetry, means this host.
+  public-key:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    volumes:
+      - ./public-key/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./public-key/site:/srv:ro
+      # The same certificate fleet-telemetry uses; both are for the one hostname.
+      - ./fleet-telemetry/server-cert.pem:/etc/nginx/certs/server-cert.pem:ro
+      - ./fleet-telemetry/server-key.pem:/etc/nginx/certs/server-key.pem:ro
+    networks:
+      - evsolar
+
   controller:
     image: ghcr.io/bbarber/evsolarchargecontroller/evsolar:latest
     restart: unless-stopped

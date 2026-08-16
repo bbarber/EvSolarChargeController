@@ -17,7 +17,7 @@ packages:
 runcmd:
   # Insert ACCEPT rules at the head of INPUT so they precede the image's trailing REJECT.
   - iptables -I INPUT 1 -p tcp --dport ${telemetry_port} -m conntrack --ctstate NEW -j ACCEPT
-  - iptables -I INPUT 1 -p tcp --dport ${proxy_port} -m conntrack --ctstate NEW -j ACCEPT
+  - iptables -I INPUT 1 -p tcp --dport ${public_key_port} -m conntrack --ctstate NEW -j ACCEPT
   - netfilter-persistent save
   - systemctl enable --now docker
   - usermod -aG docker ubuntu
