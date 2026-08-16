@@ -348,7 +348,12 @@ func (s *Store) ReadingsAboveSince(ctx context.Context, since time.Time, minAmps
 	return n, nil
 }
 
-// PruneSolarReadings drops readings older than before, keeping the table bounded.
+// PruneSolarReadings drops readings older than before.
+//
+// Nothing calls this. Readings are kept forever: a year is roughly a megabyte, and the accumulated
+// history is the only real measurement of this array in existence. Retained as a manual operation
+// in case the table ever does need trimming — but note that sharing a prune horizon with a query
+// window is exactly how the wake gate was silently broken, so any caller should own its own.
 func (s *Store) PruneSolarReadings(ctx context.Context, before time.Time) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
 		`DELETE FROM solar_readings WHERE reading_at < ?`, formatTime(before))

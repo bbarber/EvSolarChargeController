@@ -154,3 +154,35 @@ func TestLongerRetentionDoesNotChangeTheTarget(t *testing.T) {
 		t.Errorf("setAmps = %v, want [6] — a retained old peak must not raise the target", cmd.setAmps)
 	}
 }
+
+// Readings must survive indefinitely. The history is the only real measurement of this array, and
+// an automatic prune is what silently broke the wake gate.
+func TestReadingsAreNeverDeleted(t *testing.T) {
+	start := time.Date(2026, 8, 16, 19, 0, 0, 0, time.UTC)
+
+	solar := &fakeSolar{}
+	cmd := &fakeCommander{}
+	c, st := newController(t, solar, cmd)
+	ctx := context.Background()
+	chargingVehicle(t, st, start)
+
+	// A reading from well before any window this system uses.
+	old := start.Add(-30 * 24 * time.Hour)
+	if err := st.AddSolarReading(ctx, old, 2400, 10); err != nil {
+		t.Fatalf("AddSolarReading: %v", err)
+	}
+
+	solar.result = watts(1440, start.Add(-2*time.Minute))
+	if err := c.Evaluate(ctx, start); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	// Counting from the beginning of time must still find the month-old reading.
+	n, err := st.ReadingsAboveSince(ctx, time.Time{}, 1)
+	if err != nil {
+		t.Fatalf("ReadingsAboveSince: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("found %d readings, want 2 — a cycle deleted history", n)
+	}
+}

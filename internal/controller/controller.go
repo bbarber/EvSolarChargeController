@@ -41,7 +41,6 @@ type Store interface {
 	AddSolarReading(ctx context.Context, at time.Time, watts, amps float64) error
 	MaxAmpsSince(ctx context.Context, since time.Time) (*float64, error)
 	ReadingsAboveSince(ctx context.Context, since time.Time, minAmps float64) (int, error)
-	PruneSolarReadings(ctx context.Context, before time.Time) (int64, error)
 	RecordWake(ctx context.Context, vin string, at time.Time) error
 	WakesSince(ctx context.Context, vin string, since time.Time) (int, error)
 }
@@ -206,13 +205,11 @@ func (c *Controller) Evaluate(ctx context.Context, now time.Time) error {
 			"at", c.window.Describe(now))
 	}
 
-	// Prune on the retention horizon, not the lookback. Pruning at the lookback horizon deleted
-	// the previous reading moments before the wake gate counted it, leaving one reading where the
-	// gate needed two — so the gate could never pass. Targeting is unaffected: a max taken over
-	// the trailing 20 minutes does not change because older rows survive.
-	if _, err := c.store.PruneSolarReadings(ctx, now.Add(-c.opts.ReadingRetention)); err != nil {
-		c.log.Warn("pruning solar readings", "error", err)
-	}
+	// Readings are never deleted. At 27 a day a year of history is about a megabyte against a
+	// 47 GB volume, reading_at is the primary key so range scans stay cheap at any realistic size,
+	// and the accumulated record is the only real measurement of this array that exists — the
+	// simulations still run on an invented 4.2 kW peak. Pruning bought nothing and, when its
+	// horizon was shared with the wake gate, silently broke it.
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
