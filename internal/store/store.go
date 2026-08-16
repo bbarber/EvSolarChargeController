@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go driver: no cgo, so it cross-compiles to arm64 cleanly
@@ -32,7 +33,9 @@ CREATE TABLE IF NOT EXISTS vehicle_state (
     override_detected_at     TEXT,
     last_set_amps            INTEGER,
     last_set_at              TEXT,
-    last_updated             TEXT    NOT NULL
+    last_updated             TEXT    NOT NULL,
+    online                   INTEGER,
+    online_at                TEXT
 );
 
 CREATE TABLE IF NOT EXISTS solar_readings (
@@ -79,6 +82,19 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("applying schema: %w", err)
+	}
+
+	// Columns added after the first deployment. CREATE TABLE IF NOT EXISTS does nothing to a table
+	// that already exists, so existing databases need these explicitly; a duplicate-column error
+	// just means this has already run.
+	for _, stmt := range []string{
+		`ALTER TABLE vehicle_state ADD COLUMN online INTEGER`,
+		`ALTER TABLE vehicle_state ADD COLUMN online_at TEXT`,
+	} {
+		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			db.Close()
+			return nil, fmt.Errorf("migrating: %w", err)
+		}
 	}
 
 	if path != ":memory:" {
@@ -141,7 +157,7 @@ func intFrom(v sql.NullInt64) *int {
 
 const vehicleColumns = `vin, charge_amps, reported_max_amps, battery_level_percent,
     soc_stop_issued_at, low_solar_stop_issued_at, charging_state, override_active,
-    override_detected_at, last_set_amps, last_set_at, last_updated`
+    override_detected_at, last_set_amps, last_set_at, last_updated, online, online_at`
 
 // GetVehicleState returns nil (with no error) when the VIN has never reported.
 func (s *Store) GetVehicleState(ctx context.Context, vin string) (*domain.VehicleState, error) {
@@ -188,11 +204,19 @@ func scanVehicleState(row scanner) (*domain.VehicleState, error) {
 		lastSetAmps      sql.NullInt64
 		lastSetAt        sql.NullString
 		lastUpdated      string
+		online           sql.NullInt64
+		onlineAt         sql.NullString
 	)
 
 	if err := row.Scan(&v.VIN, &chargeAmps, &reportedMax, &batteryLevel, &socStop, &lowSolarStop,
-		&chargingState, &overrideActive, &overrideDetected, &lastSetAmps, &lastSetAt, &lastUpdated); err != nil {
+		&chargingState, &overrideActive, &overrideDetected, &lastSetAmps, &lastSetAt, &lastUpdated,
+		&online, &onlineAt); err != nil {
 		return nil, err
+	}
+
+	if online.Valid {
+		b := online.Int64 != 0
+		v.Online = &b
 	}
 
 	v.ChargeAmps = intFrom(chargeAmps)
@@ -215,6 +239,9 @@ func scanVehicleState(row scanner) (*domain.VehicleState, error) {
 	if v.LastSetAt, err = parseTime(lastSetAt); err != nil {
 		return nil, err
 	}
+	if v.OnlineAt, err = parseTime(onlineAt); err != nil {
+		return nil, err
+	}
 	if v.LastUpdated, err = time.Parse(timeLayout, lastUpdated); err != nil {
 		return nil, fmt.Errorf("parsing last_updated %q: %w", lastUpdated, err)
 	}
@@ -225,7 +252,7 @@ func scanVehicleState(row scanner) (*domain.VehicleState, error) {
 func (s *Store) SaveVehicleState(ctx context.Context, v *domain.VehicleState) error {
 	_, err := s.db.ExecContext(ctx, `
         INSERT INTO vehicle_state (`+vehicleColumns+`)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(vin) DO UPDATE SET
             charge_amps              = excluded.charge_amps,
             reported_max_amps        = excluded.reported_max_amps,
@@ -237,15 +264,24 @@ func (s *Store) SaveVehicleState(ctx context.Context, v *domain.VehicleState) er
             override_detected_at     = excluded.override_detected_at,
             last_set_amps            = excluded.last_set_amps,
             last_set_at              = excluded.last_set_at,
-            last_updated             = excluded.last_updated`,
+            last_updated             = excluded.last_updated,
+            online                   = excluded.online,
+            online_at                = excluded.online_at`,
 		v.VIN, nullInt(v.ChargeAmps), nullInt(v.ReportedMaxAmps), nullInt(v.BatteryLevelPercent),
 		nullTime(v.SocStopIssuedAt), nullTime(v.LowSolarStopIssuedAt), v.ChargingState.String(),
 		boolToInt(v.OverrideActive), nullTime(v.OverrideDetectedAt), nullInt(v.LastSetAmps),
-		nullTime(v.LastSetAt), formatTime(v.LastUpdated))
+		nullTime(v.LastSetAt), formatTime(v.LastUpdated), nullBool(v.Online), nullTime(v.OnlineAt))
 	if err != nil {
 		return fmt.Errorf("saving vehicle state for %s: %w", v.VIN, err)
 	}
 	return nil
+}
+
+func nullBool(v *bool) any {
+	if v == nil {
+		return nil
+	}
+	return boolToInt(*v)
 }
 
 func boolToInt(b bool) int {

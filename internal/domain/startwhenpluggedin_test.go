@@ -23,11 +23,15 @@ func startOptions(enabled bool) ChargingOptions {
 // pluggedIdle is the state that motivated the feature: connector in, car not charging, and no
 // marker from us because a person stopped it.
 func pluggedIdle(opts ...vehOpt) *VehicleState {
+	online := true
+	at := testNow.Add(-5 * time.Minute)
 	v := &VehicleState{
 		VIN:                 testVIN,
 		ChargingState:       StateStopped,
 		BatteryLevelPercent: intPtr(63),
 		LastUpdated:         testNow.Add(-2 * time.Minute),
+		Online:              &online,
+		OnlineAt:            &at,
 	}
 	for _, o := range opts {
 		o(v)
@@ -99,6 +103,47 @@ func TestNeverStartsWithTheSunDown(t *testing.T) {
 
 	if d.Action != ActionSkipInsufficientSolar {
 		t.Errorf("Action = %v, want SkipInsufficientSolar outside the solar window", d.Action)
+	}
+}
+
+// The failure that motivated the connectivity subscription: plugged in an hour ago, since fallen
+// asleep. Data age said "recent enough"; the command came back "vehicle is offline or asleep".
+func TestNeverStartsAnOfflineCar(t *testing.T) {
+	v := pluggedIdle()
+	offline := false
+	v.Online = &offline
+
+	d := Decide(v, amps(12), true, startOptions(true), testNow)
+
+	if d.Action != ActionSkipNotCharging {
+		t.Errorf("Action = %v, want SkipNotCharging for an offline car", d.Action)
+	}
+}
+
+// Never having seen a connectivity event is not evidence the car is reachable.
+func TestNeverStartsWhenConnectivityIsUnknown(t *testing.T) {
+	v := pluggedIdle()
+	v.Online = nil
+
+	d := Decide(v, amps(12), true, startOptions(true), testNow)
+
+	if d.Action != ActionSkipNotCharging {
+		t.Errorf("Action = %v, want SkipNotCharging when connectivity is unknown", d.Action)
+	}
+}
+
+// A resume is a different case: we stopped that session, so the car was charging moments ago and
+// the connectivity requirement would only strand it.
+func TestAResumeDoesNotRequireAConnectivityEvent(t *testing.T) {
+	v := pluggedIdle()
+	v.Online = nil
+	stopped := testNow.Add(-time.Hour)
+	v.LowSolarStopIssuedAt = &stopped
+
+	d := Decide(v, amps(12), true, startOptions(true), testNow)
+
+	if d.Action != ActionResumeCharging {
+		t.Errorf("Action = %v, want ResumeCharging", d.Action)
 	}
 }
 

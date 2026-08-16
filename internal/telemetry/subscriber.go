@@ -22,8 +22,9 @@ type Subscriber struct {
 	log      *slog.Logger
 }
 
-// NewSubscriber targets the PUB socket. The endpoint is normally a loopback address: the telemetry
-// server and this process share a host, and the socket should never be exposed off it.
+// NewSubscriber targets the PUB socket. The topic is a prefix: fleet-telemetry publishes on
+// "<namespace>_<recordType>", and a ZMQ SUB filter is a prefix match, so subscribing to the bare
+// namespace carries every record type on one socket.
 func NewSubscriber(endpoint, topic string, log *slog.Logger) *Subscriber {
 	return &Subscriber{endpoint: endpoint, topic: topic, log: log}
 }
@@ -31,7 +32,7 @@ func NewSubscriber(endpoint, topic string, log *slog.Logger) *Subscriber {
 // Run subscribes and dispatches records until ctx is cancelled.
 //
 // Records arrive as two frames: the topic, then the protobuf payload.
-func (s *Subscriber) Run(ctx context.Context, handle func(context.Context, []byte) error) error {
+func (s *Subscriber) Run(ctx context.Context, handle func(ctx context.Context, topic string, payload []byte) error) error {
 	socket, err := zmq.NewSocket(zmq.SUB)
 	if err != nil {
 		return fmt.Errorf("creating the ZMQ SUB socket: %w", err)
@@ -78,8 +79,9 @@ func (s *Subscriber) Run(ctx context.Context, handle func(context.Context, []byt
 			s.log.Warn("ignoring a telemetry frame with no payload", "frames", len(frames))
 			continue
 		}
+		topic := string(frames[0])
 
-		if err := handle(ctx, payload); err != nil {
+		if err := handle(ctx, topic, payload); err != nil {
 			s.log.Warn("handling a telemetry record", "error", err)
 		}
 	}

@@ -24,12 +24,15 @@
   },
 
   "_records_comment": [
-    "Only vehicle data ('V') is forwarded to the controller; the rest is logged locally.",
+    "Vehicle data ('V') and connectivity are forwarded to the controller; the rest is logged.",
+    "Connectivity is what tells us the car is reachable — a parked, connected car sends no data,",
+    "so the age of the last data frame cannot distinguish idle from asleep.",
     "Note the comment lives OUTSIDE the records block: every key inside records must map to an",
     "array of dispatchers, so a stray string there fails to unmarshal and the server panics."
   ],
   "records": {
     "V": ["zmq"],
+    "connectivity": ["zmq"],
     "alerts": ["logger"],
     "errors": ["logger"]
   },

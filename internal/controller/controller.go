@@ -69,7 +69,52 @@ func (c *Controller) SetChargingOptions(opts domain.ChargingOptions) {
 	c.opts = opts
 }
 
-// HandleTelemetry decodes one record and folds it into the vehicle's state.
+// HandleRecord routes one fleet-telemetry record by its topic.
+//
+// Both record types arrive on the same socket, because a ZMQ SUB filter is a prefix match and the
+// subscription is the bare namespace.
+func (c *Controller) HandleRecord(ctx context.Context, topic string, raw []byte) error {
+	switch telemetry.RecordTypeFromTopic(topic) {
+	case telemetry.RecordConnectivity:
+		return c.handleConnectivity(ctx, raw)
+	case telemetry.RecordVehicleData:
+		return c.HandleTelemetry(ctx, raw)
+	default:
+		return nil // A record type we do not subscribe to; ignore rather than error.
+	}
+}
+
+// handleConnectivity records whether the car is reachable. This is the only trustworthy answer to
+// that question: a connected but parked car sends no data, so data age cannot distinguish idle
+// from asleep.
+func (c *Controller) handleConnectivity(ctx context.Context, raw []byte) error {
+	conn, err := telemetry.DecodeConnectivity(raw, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	state, err := c.store.GetVehicleState(ctx, conn.VIN)
+	if err != nil {
+		return err
+	}
+	if state == nil {
+		state = domain.NewVehicleState(conn.VIN, conn.ObservedAt)
+	}
+
+	online := conn.Online
+	state.Online = &online
+	state.OnlineAt = &conn.ObservedAt
+
+	c.log.Info("vehicle connectivity changed",
+		"vin", conn.VIN, "online", conn.Online, "network", conn.Network, "at", conn.ObservedAt)
+
+	return c.store.SaveVehicleState(ctx, state)
+}
+
+// HandleTelemetry decodes one vehicle-data record and folds it into the vehicle's state.
 func (c *Controller) HandleTelemetry(ctx context.Context, raw []byte) error {
 	obs, err := telemetry.DecodeBytes(raw, time.Now().UTC())
 	if err != nil {
