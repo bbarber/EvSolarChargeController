@@ -81,6 +81,8 @@ func Load() (Config, error) {
 	cfg.Charging.WakeCooldown = envDuration("EVSOLAR_WAKE_COOLDOWN", cfg.Charging.WakeCooldown, fail)
 	cfg.Charging.WakeSocHeadroom = envInt("EVSOLAR_WAKE_SOC_HEADROOM", cfg.Charging.WakeSocHeadroom, fail)
 	cfg.Charging.WakeDays = envWeekdays("EVSOLAR_WAKE_DAYS", cfg.Charging.WakeDays, fail)
+	cfg.Charging.SustainedWindow = envDuration("EVSOLAR_SUSTAINED_WINDOW", cfg.Charging.SustainedWindow, fail)
+	cfg.Charging.ReadingRetention = envDuration("EVSOLAR_READING_RETENTION", cfg.Charging.ReadingRetention, fail)
 
 	cfg.Window.TimeZone = env("EVSOLAR_TIMEZONE", cfg.Window.TimeZone)
 	cfg.Window.StartHourLocal = envInt("EVSOLAR_WINDOW_START_HOUR", cfg.Window.StartHourLocal, fail)
@@ -99,6 +101,16 @@ func Load() (Config, error) {
 	if cfg.Charging.MinChargeAmps > cfg.Charging.MaxChargeAmps {
 		fail("EVSOLAR_MIN_AMPS (%d) cannot exceed EVSOLAR_MAX_AMPS (%d)",
 			cfg.Charging.MinChargeAmps, cfg.Charging.MaxChargeAmps)
+	}
+	// The wake gate needs at least two readings inside the sustained window, and readings arrive
+	// one per tick. Catching this here beats discovering it as a gate that silently never fires.
+	if cfg.Charging.SustainedWindow <= cfg.Charging.LookbackWindow {
+		fail("EVSOLAR_SUSTAINED_WINDOW (%s) must be longer than EVSOLAR_LOOKBACK (%s), or fewer than two readings can fall inside it",
+			cfg.Charging.SustainedWindow, cfg.Charging.LookbackWindow)
+	}
+	if cfg.Charging.ReadingRetention < cfg.Charging.SustainedWindow {
+		fail("EVSOLAR_READING_RETENTION (%s) must be at least EVSOLAR_SUSTAINED_WINDOW (%s), or readings are pruned before they can be counted",
+			cfg.Charging.ReadingRetention, cfg.Charging.SustainedWindow)
 	}
 	if cfg.Window.StartHourLocal >= cfg.Window.EndHourLocal {
 		fail("EVSOLAR_WINDOW_START_HOUR (%d) must be before EVSOLAR_WINDOW_END_HOUR (%d)",
