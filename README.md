@@ -53,6 +53,58 @@ Two processes, one box. Commands are signed in-process using Tesla's `vehicle-co
 there is no proxy container; the controller subscribes to fleet-telemetry's ZeroMQ socket directly,
 so there is no bridge.
 
+### One cycle, end to end
+
+Telemetry arrives continuously and unprompted; the control loop runs on its own clock. They meet
+only in the database.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Car as Tesla vehicle
+    participant FT as fleet-telemetry
+    participant Ctl as controller
+    participant DB as SQLite
+    participant Enp as Enphase cloud
+    participant API as Tesla Fleet API
+
+    Note over Car,Ctl: Push only. The car is never polled.
+
+    Car->>FT: mTLS WebSocket, protobuf on change
+    FT->>Ctl: ZeroMQ, topic evsolar_V
+    Ctl->>DB: fold into vehicle state
+    Car->>FT: connect / disconnect
+    FT->>Ctl: ZeroMQ, topic evsolar_connectivity
+    Ctl->>DB: online / offline
+
+    loop every 20 minutes, around the clock
+        opt inside the 09:00-18:00 solar window
+            Ctl->>Enp: GET system summary
+            Enp-->>Ctl: watts
+            Ctl->>DB: store reading
+        end
+
+        Ctl->>DB: trailing 20-min max, vehicle state
+        DB-->>Ctl: amps available, charge state, online
+
+        alt charging, and target has moved
+            Ctl->>API: SetChargingAmps, signed in-process
+            API->>Car: relays to the vehicle
+        else sun down, or below the 5A minimum
+            Ctl->>API: ChargeStop, signed
+            API->>Car: relays to the vehicle
+            Note over Ctl,DB: recorded as a low-solar stop, so it resumes tomorrow
+        else asleep, plugged in, sun sustained
+            Ctl->>API: wake_up
+            API->>Car: wakes the vehicle
+            Note over Ctl,API: opt-in, Fri-Sun, twice a day, 1h cooldown
+        else at the state-of-charge cap
+            Ctl->>API: ChargeStop, signed
+            API->>Car: relays to the vehicle
+        end
+    end
+```
+
 ### The control loop
 
 Every 20 minutes inside the daylight window, the controller:
