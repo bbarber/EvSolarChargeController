@@ -46,3 +46,16 @@ TestResults/
 coverage/
 *.trx
 *.coverage
+
+# Terraform (OCI)
+infra/oracle/.terraform/
+infra/oracle/*.tfstate
+infra/oracle/*.tfstate.*
+infra/oracle/*.tfvars
+infra/oracle/crash.log
+
+# Deployment secrets
+deploy/.env
+deploy/secrets/
+deploy/fleet-telemetry/config.json
+deploy/fleet-telemetry/*.pem

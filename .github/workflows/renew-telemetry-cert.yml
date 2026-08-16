@@ -1,11 +1,12 @@
 name: Renew telemetry certificate
 
 # fleet-telemetry serves its own TLS certificate, because Tesla's mutual-TLS handshake has to reach
-# the process untouched — which means TCP passthrough ingress, and Azure's free managed
-# certificates only cover HTTP ingress. So we issue and rotate a Let's Encrypt certificate here.
+# the process untouched — it identifies each vehicle from the client certificate on the TLS
+# connection itself, so nothing may terminate TLS in front of it. That rules out every managed
+# certificate service, and leaves us issuing and rotating a Let's Encrypt certificate here.
 #
-# DNS-01 rather than HTTP-01: nothing answers HTTP on the telemetry hostname (it is a raw TCP
-# listener on a non-standard port), so proving control has to happen in DNS.
+# DNS-01 rather than HTTP-01: nothing answers HTTP on the telemetry hostname (it is a raw TLS
+# listener on port 8443), so proving control has to happen in DNS.
 
 on:
   schedule:
@@ -21,7 +22,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: renew-telemetry-cert
@@ -36,13 +36,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Check configuration
-        id: config
         run: |
           missing=()
           [[ -z "${{ vars.TELEMETRY_HOSTNAME }}" ]] && missing+=(TELEMETRY_HOSTNAME)
-          [[ -z "${{ vars.STORAGE_ACCOUNT_NAME }}" ]] && missing+=(STORAGE_ACCOUNT_NAME)
-          [[ -z "${{ vars.RESOURCE_GROUP }}" ]] && missing+=(RESOURCE_GROUP)
+          [[ -z "${{ vars.ACME_EMAIL }}" ]] && missing+=(ACME_EMAIL)
           [[ -z "${{ secrets.DUCKDNS_TOKEN }}" ]] && missing+=(DUCKDNS_TOKEN)
+          [[ -z "${{ secrets.TELEMETRY_SSH_KEY }}" ]] && missing+=(TELEMETRY_SSH_KEY)
           if (( ${#missing[@]} )); then
             echo "::error::Not configured yet. Missing: ${missing[*]}"
             exit 1
@@ -56,7 +55,7 @@ jobs:
       - name: Issue certificate
         env:
           DUCKDNS_TOKEN: ${{ secrets.DUCKDNS_TOKEN }}
-          HOSTNAME: ${{ vars.TELEMETRY_HOSTNAME }}
+          TELEMETRY_HOSTNAME: ${{ vars.TELEMETRY_HOSTNAME }}
           ACME_EMAIL: ${{ vars.ACME_EMAIL }}
         run: |
           # DuckDNS holds only one TXT value per domain at a time, so a single hostname per
@@ -74,49 +73,35 @@ jobs:
             --logs-dir ./letsencrypt-logs \
             --cert-name telemetry \
             ${{ inputs.force && '--force-renewal' || '' }} \
-            -d "$HOSTNAME"
+            -d "$TELEMETRY_HOSTNAME"
 
-      - name: Azure login
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Upload to the telemetry config share
+      - name: Install on the telemetry host
         env:
-          STORAGE_ACCOUNT: ${{ vars.STORAGE_ACCOUNT_NAME }}
-          SHARE: ${{ vars.TELEMETRY_CONFIG_SHARE || 'telemetry-config' }}
+          SSH_KEY: ${{ secrets.TELEMETRY_SSH_KEY }}
+          SSH_HOST: ${{ vars.TELEMETRY_HOSTNAME }}
+          SSH_USER: ${{ vars.TELEMETRY_SSH_USER || 'ubuntu' }}
+          DEPLOY_DIR: ${{ vars.TELEMETRY_DEPLOY_DIR || '/opt/evsolar' }}
         run: |
-          # fleet-telemetry reads these paths from the mounted share; names must match config.json.
-          for pair in "fullchain.pem:server-cert.pem" "privkey.pem:server-key.pem"; do
-            src="./letsencrypt/live/telemetry/${pair%%:*}"
-            dest="${pair##*:}"
-            az storage file upload \
-              --account-name "$STORAGE_ACCOUNT" \
-              --share-name "$SHARE" \
-              --source "$src" \
-              --path "$dest" \
-              --auth-mode key \
-              --only-show-errors
-            echo "Uploaded $dest"
-          done
+          install -m 600 /dev/null key
+          echo "$SSH_KEY" > key
+          # Pinning the host key would mean rotating a secret every time the instance is rebuilt,
+          # and the payload is a public certificate; the private key is the one thing that matters
+          # and it is sent over the SSH channel itself.
+          ssh_opts="-i key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
 
-      - name: Restart the telemetry container app
-        env:
-          RESOURCE_GROUP: ${{ vars.RESOURCE_GROUP }}
-          APP_NAME: ${{ vars.TELEMETRY_APP_NAME }}
-        run: |
-          # The certificate is read at startup, so a new revision is what actually picks it up.
-          if [[ -z "$APP_NAME" ]]; then
-            echo "::warning::TELEMETRY_APP_NAME not set; skipping restart. The new certificate is on the share but not yet in use."
-            exit 0
-          fi
-          az containerapp revision restart \
-            --name "$APP_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
-            --revision "$(az containerapp show -n "$APP_NAME" -g "$RESOURCE_GROUP" --query 'properties.latestRevisionName' -o tsv)" \
-            --only-show-errors
+          # File names must match the paths in fleet-telemetry's config.json.
+          scp $ssh_opts ./letsencrypt/live/telemetry/fullchain.pem \
+            "$SSH_USER@$SSH_HOST:$DEPLOY_DIR/fleet-telemetry/server-cert.pem"
+          scp $ssh_opts ./letsencrypt/live/telemetry/privkey.pem \
+            "$SSH_USER@$SSH_HOST:$DEPLOY_DIR/fleet-telemetry/server-key.pem"
+
+          # The certificate is read at startup, so only a restart actually picks it up. Restarting
+          # just the telemetry container leaves the controller running, so no solar readings or
+          # telemetry state are lost.
+          ssh $ssh_opts "$SSH_USER@$SSH_HOST" \
+            "chmod 600 $DEPLOY_DIR/fleet-telemetry/server-key.pem && cd $DEPLOY_DIR && docker compose restart fleet-telemetry"
+
+          rm -f key
 
       - name: Report expiry
         run: |

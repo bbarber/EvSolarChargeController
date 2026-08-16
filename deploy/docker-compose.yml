@@ -1,0 +1,63 @@
+# Two containers, where the Azure deployment needed four: Tesla's telemetry server, and this
+# controller. The command proxy is gone because commands are signed in-process, and the ZeroMQ
+# bridge is gone because the controller subscribes to the socket itself.
+
+name: evsolar
+
+services:
+  # Vehicles connect here directly and stream protobuf over a mutual-TLS WebSocket. mTLS is
+  # terminated inside this process — it identifies each car from the client certificate on the TLS
+  # connection itself, which is why no proxy or load balancer can sit in front of it.
+  fleet-telemetry:
+    image: tesla/fleet-telemetry:v0.9.4
+    restart: unless-stopped
+    command: ["-config=/etc/fleet-telemetry/config.json"]
+    ports:
+      # Externally reachable: this is the port registered in fleet_telemetry_config, and changing
+      # it means re-registering both VINs.
+      - "8443:8443"
+    volumes:
+      # Holds config.json plus the Let's Encrypt certificate and key for the DuckDNS hostname.
+      - ./fleet-telemetry:/etc/fleet-telemetry:ro
+    networks:
+      - evsolar
+    healthcheck:
+      test: ["CMD", "/fleet-telemetry", "-config=/etc/fleet-telemetry/config.json", "-version"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  controller:
+    image: ghcr.io/bbarber/evsolarchargecontroller/evsolar:latest
+    restart: unless-stopped
+    depends_on:
+      - fleet-telemetry
+    environment:
+      # The ZMQ PUB socket is reachable by service name on the internal network only; it is
+      # deliberately not published to the host.
+      EVSOLAR_ZMQ_ENDPOINT: tcp://fleet-telemetry:5284
+      EVSOLAR_ZMQ_TOPIC: V
+      EVSOLAR_DB_PATH: /var/lib/evsolar/evsolar.db
+      EVSOLAR_TESLA_KEY_PATH: /etc/evsolar/fleet-key.pem
+      EVSOLAR_TESLA_SESSION_CACHE: /var/lib/evsolar/sessions.json
+    env_file:
+      # Credentials and VINs. Never committed — see .env.example.
+      - .env
+    volumes:
+      - evsolar-data:/var/lib/evsolar
+      # The command signing key, paired to each vehicle as a virtual key. Read-only: losing or
+      # replacing it means re-pairing both cars by hand.
+      - ./secrets/fleet-key.pem:/etc/evsolar/fleet-key.pem:ro
+    networks:
+      - evsolar
+
+networks:
+  evsolar:
+    driver: bridge
+
+volumes:
+  # Named rather than a bind mount so the SQLite file keeps its 0600 ownership under the
+  # container's unprivileged user. It holds rotating refresh tokens; both providers invalidate the
+  # previous token on use, so losing this volume means re-authorizing by hand.
+  evsolar-data:
