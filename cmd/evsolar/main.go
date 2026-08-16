@@ -90,7 +90,7 @@ func run() error {
 		// Telemetry is the only source of vehicle state, so losing it is fatal rather than
 		// something to limp along without: the control loop would go on deciding from a snapshot
 		// that quietly ages out and then reads as "asleep" forever.
-		if err := subscriber.Run(ctx, ctrl.HandleTelemetry); err != nil {
+		if err := subscriber.Run(ctx, ctrl.HandleRecord); err != nil {
 			errs <- fmt.Errorf("telemetry ingest: %w", err)
 		}
 	}()

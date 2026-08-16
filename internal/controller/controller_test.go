@@ -256,6 +256,8 @@ func TestStartWhenPluggedInIssuesARealCommand(t *testing.T) {
 	v := domain.NewVehicleState(testVIN, testNow)
 	v.ChargingState = domain.StateStopped // plugged in, idle, nobody stopped it but the driver
 	v.BatteryLevelPercent = intPtr(63)
+	online, at := true, testNow.Add(-5*time.Minute)
+	v.Online, v.OnlineAt = &online, &at
 	if err := st.SaveVehicleState(context.Background(), v); err != nil {
 		t.Fatalf("SaveVehicleState: %v", err)
 	}

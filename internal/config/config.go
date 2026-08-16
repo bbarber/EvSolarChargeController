@@ -43,7 +43,7 @@ func Load() (Config, error) {
 	cfg := Config{
 		DatabasePath: env("EVSOLAR_DB_PATH", "/var/lib/evsolar/evsolar.db"),
 		ZMQEndpoint:  env("EVSOLAR_ZMQ_ENDPOINT", "tcp://127.0.0.1:5284"),
-		ZMQTopic:     env("EVSOLAR_ZMQ_TOPIC", "V"),
+		ZMQTopic:     env("EVSOLAR_ZMQ_TOPIC", "evsolar_"),
 		Charging:     domain.DefaultChargingOptions(),
 		Window:       domain.DefaultPollingWindowOptions(),
 		Enphase:      enphase.DefaultOptions(),

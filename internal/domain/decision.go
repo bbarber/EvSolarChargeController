@@ -185,10 +185,17 @@ func Decide(vehicle *VehicleState, maxAmpsLastHour *float64, solarWindowOpen boo
 				"Solar recovered to %.2fA; resuming %s at %dA.", amps, vehicle.VIN, target)}
 		}
 
-		// Starting a session nobody asked us to start is opt-in. It is safe here and nowhere else:
-		// the car is reporting telemetry and reports itself plugged in, so the usual worry — that a
-		// command wakes a sleeping vehicle — does not apply. Every other gate has already passed.
-		if opts.StartWhenPluggedIn && state.IsPluggedIn() {
+		// Starting a session nobody asked us to start is opt-in, and requires the car to be
+		// demonstrably online — not merely to have been plugged in when it last said anything.
+		//
+		// Learned the hard way: a car plugged in and idle for an hour had gone to sleep, the
+		// stored state still said "plugged in", and the command came back "vehicle is offline or
+		// asleep". Data age cannot answer this, because a connected parked car sends nothing.
+		if opts.StartWhenPluggedIn && state.IsPluggedIn() && vehicle.Online != nil && !*vehicle.Online {
+			return skip(ActionSkipNotCharging, fmt.Sprintf(
+				"%s is plugged in with %.2fA available but is offline; not waking it.", vehicle.VIN, amps))
+		}
+		if opts.StartWhenPluggedIn && state.IsPluggedIn() && vehicle.Online != nil && *vehicle.Online {
 			return Decision{Action: ActionStartCharging, TargetAmps: intPtr(target), Reason: fmt.Sprintf(
 				"%s is plugged in and idle with %.2fA available; starting at %dA.",
 				vehicle.VIN, amps, target)}

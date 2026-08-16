@@ -97,6 +97,15 @@ type VehicleState struct {
 	LastSetAt   *time.Time
 
 	LastUpdated time.Time
+
+	// Online is the vehicle's connection state as reported by fleet-telemetry's connectivity
+	// stream. Nil means never observed — which is treated as "do not assume reachable".
+	//
+	// This is not the same question as whether telemetry is recent. A parked, connected car sends
+	// no data for hours because signals transmit on change, so data age says nothing about
+	// reachability; a connectivity event does.
+	Online   *bool
+	OnlineAt *time.Time
 }
 
 func NewVehicleState(vin string, now time.Time) *VehicleState {
