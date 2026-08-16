@@ -115,30 +115,38 @@ func (c *Controller) Run(ctx context.Context) error {
 //
 // Exported so it can be driven directly in tests without waiting on a ticker.
 func (c *Controller) Evaluate(ctx context.Context, now time.Time) error {
-	if !c.window.IsOpen(now) {
-		c.log.Debug("outside the polling window; not spending an Enphase call",
-			"at", c.window.Describe(now))
-		return nil
-	}
-
-	// Poll first, and record whatever came back, before taking any lock: the HTTP call is the
-	// slow part and holding the mutex across it would stall telemetry ingest.
-	result := c.solar.CurrentProduction(ctx, now)
-	if result.Success() {
-		amps, err := domain.WattsToAmps(result.Production.Watts, c.opts.SystemVoltage)
-		if err != nil {
-			return err
+	// Only the *poll* is window-bound. The decision runs around the clock.
+	//
+	// These were conflated originally, and it cost both the state-of-charge cap and the premise of
+	// the whole system: a car plugged in at 04:30 charged to 100% on grid power before the loop
+	// first ran at 09:00, and a car still charging at 18:00 carried on all night. The Enphase plan
+	// is what the window protects — 1000 calls a month — and deciding costs nothing against it.
+	//
+	// Outside the window Decide stops any running session: this car charges on solar or not at
+	// all. It is recorded as a low-solar stop, so it resumes by itself the next morning.
+	if c.window.IsOpen(now) {
+		// Poll first, and record whatever came back, before taking any lock: the HTTP call is the
+		// slow part and holding the mutex across it would stall telemetry ingest.
+		result := c.solar.CurrentProduction(ctx, now)
+		if result.Success() {
+			amps, err := domain.WattsToAmps(result.Production.Watts, c.opts.SystemVoltage)
+			if err != nil {
+				return err
+			}
+			if err := c.store.AddSolarReading(ctx, result.Production.ReadingAt, result.Production.Watts, amps); err != nil {
+				return err
+			}
+			c.log.Info("solar reading recorded",
+				"watts", result.Production.Watts, "amps", amps, "at", result.Production.ReadingAt)
+		} else {
+			// A failed poll is not evidence of low production, so the cycle continues on whatever
+			// readings are still inside the window.
+			c.log.Warn("solar poll produced no reading",
+				"reason", result.Reason, "message", result.Message)
 		}
-		if err := c.store.AddSolarReading(ctx, result.Production.ReadingAt, result.Production.Watts, amps); err != nil {
-			return err
-		}
-		c.log.Info("solar reading recorded",
-			"watts", result.Production.Watts, "amps", amps, "at", result.Production.ReadingAt)
 	} else {
-		// A failed poll is not evidence of low production, so the cycle continues on whatever
-		// readings are still inside the window.
-		c.log.Warn("solar poll produced no reading",
-			"reason", result.Reason, "message", result.Message)
+		c.log.Debug("outside the polling window; deciding without spending an Enphase call",
+			"at", c.window.Describe(now))
 	}
 
 	if _, err := c.store.PruneSolarReadings(ctx, now.Add(-c.opts.LookbackWindow)); err != nil {
@@ -158,7 +166,7 @@ func (c *Controller) Evaluate(ctx context.Context, now time.Time) error {
 		return err
 	}
 
-	decision := domain.Decide(vehicle, maxAmps, c.opts, now)
+	decision := domain.Decide(vehicle, maxAmps, c.window.IsOpen(now), c.opts, now)
 	c.log.Info("decision", "action", decision.Action.String(), "reason", decision.Reason)
 
 	return c.act(ctx, vehicle, decision, now)

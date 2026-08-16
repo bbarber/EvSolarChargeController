@@ -4,7 +4,7 @@ Automatically matches a Tesla wall connector's charge current to rooftop solar p
 backs off the moment someone changes amps by hand in the Tesla app.
 
 Solar production is read from the Enphase cloud on a 20-minute cadence during daylight hours; the
-target current is the **maximum** amp-equivalent seen in the trailing 60 minutes, which biases
+target current is the **maximum** amp-equivalent seen in the trailing 20 minutes, which biases
 toward overshoot rather than chasing every passing cloud. Vehicle state arrives by push — the car
 is never polled, because polling can wake a sleeping vehicle.
 
@@ -44,7 +44,7 @@ Oracle Cloud Always Free VM (Ampere A1, arm64)
                      │                                ▼
                      └── signed command ──────►  SQLite
                               │                  • vehicle state
-                              ▼                  • solar readings (rolling 60 min)
+                              ▼                  • solar readings (rolling 20 min)
                      Tesla Fleet API              • monthly call counter
                                                   • rotating refresh tokens
 ```
@@ -59,7 +59,7 @@ Every 20 minutes inside the daylight window, the controller:
 
 1. Polls Enphase for current production, converts watts to amps at the configured service voltage,
    and stores the reading.
-2. Prunes readings older than 60 minutes and takes the maximum of what remains.
+2. Prunes readings older than 20 minutes and takes the maximum of what remains.
 3. Reads the vehicle's last-known state and decides:
    - no telemetry, or telemetry older than 6 hours → **skip** (the car is probably asleep)
    - manual override active → **skip** until the car unplugs
@@ -174,7 +174,7 @@ All settings come from the environment; see [deploy/.env.example](deploy/.env.ex
 | `EVSOLAR_MIN_AMPS` | 5 | Connector minimum; below this we stop rather than clamp up |
 | `EVSOLAR_MAX_AMPS` | 16 | Matched to array peak output |
 | `EVSOLAR_MAX_SOC_PERCENT` | 80 | Cap this controller will not charge past |
-| `EVSOLAR_LOOKBACK` | 60m | Trailing window for the max |
+| `EVSOLAR_LOOKBACK` | 20m | Trailing window for the max |
 | `EVSOLAR_OVERRIDE_SETTLE` | 3m | Grace period after our own command |
 | `EVSOLAR_STATE_STALE_AFTER` | 6h | Telemetry older than this means "asleep" |
 | `EVSOLAR_TIMEZONE` | America/Chicago | Interprets the window hours |
