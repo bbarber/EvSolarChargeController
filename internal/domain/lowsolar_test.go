@@ -30,7 +30,7 @@ func vehSoc(p int) vehOpt { return func(v *VehicleState) { v.BatteryLevelPercent
 
 func TestStopsRatherThanChargingFromTheGrid(t *testing.T) {
 	for _, a := range []float64{0, 1.2, 4.4} {
-		d := Decide(lowSolarVehicle(), amps(a), socOptions(), testNow)
+		d := Decide(lowSolarVehicle(), amps(a), true, socOptions(), testNow)
 
 		if d.Action != ActionStopChargingLowSolar {
 			t.Errorf("%.1fA: Action = %v, want StopChargingLowSolar", a, d.Action)
@@ -43,7 +43,7 @@ func TestStopsRatherThanChargingFromTheGrid(t *testing.T) {
 
 func TestChargesWhenSolarRoundsUpToTheMinimum(t *testing.T) {
 	// 4.6A of production against a 5A request is ~96W from the grid — not worth stopping over.
-	d := Decide(lowSolarVehicle(), amps(4.6), socOptions(), testNow)
+	d := Decide(lowSolarVehicle(), amps(4.6), true, socOptions(), testNow)
 
 	if d.Action != ActionSetAmps {
 		t.Fatalf("Action = %v, want SetAmps", d.Action)
@@ -55,7 +55,7 @@ func TestChargesWhenSolarRoundsUpToTheMinimum(t *testing.T) {
 
 func TestStaysStoppedWhileSolarIsLow(t *testing.T) {
 	v := lowSolarVehicle(vehState(StateStopped), vehLowSolarStop(testNow.Add(-time.Hour)))
-	d := Decide(v, amps(2), socOptions(), testNow)
+	d := Decide(v, amps(2), true, socOptions(), testNow)
 
 	if d.Action != ActionSkipInsufficientSolar {
 		t.Errorf("Action = %v, want SkipInsufficientSolar", d.Action)
@@ -67,7 +67,7 @@ func TestStaysStoppedWhileSolarIsLow(t *testing.T) {
 
 func TestResumesOnceSolarRecovers(t *testing.T) {
 	v := lowSolarVehicle(vehState(StateStopped), vehLowSolarStop(testNow.Add(-time.Hour)))
-	d := Decide(v, amps(11), socOptions(), testNow)
+	d := Decide(v, amps(11), true, socOptions(), testNow)
 
 	if d.Action != ActionResumeCharging || !d.ShouldResume() {
 		t.Fatalf("Action = %v, want ResumeCharging", d.Action)
@@ -80,28 +80,28 @@ func TestResumesOnceSolarRecovers(t *testing.T) {
 func TestDoesNotResumeASessionThisControllerDidNotStop(t *testing.T) {
 	// The user stopped it, or the car simply is not charging. A command here could wake it.
 	v := lowSolarVehicle(vehState(StateStopped))
-	if d := Decide(v, amps(12), socOptions(), testNow); d.Action != ActionSkipNotCharging {
+	if d := Decide(v, amps(12), true, socOptions(), testNow); d.Action != ActionSkipNotCharging {
 		t.Errorf("Action = %v, want SkipNotCharging", d.Action)
 	}
 }
 
 func TestDoesNotResumeAnUnpluggedVehicle(t *testing.T) {
 	v := lowSolarVehicle(vehState(StateDisconnected), vehLowSolarStop(testNow.Add(-time.Hour)))
-	if d := Decide(v, amps(12), socOptions(), testNow); d.Action != ActionSkipNotCharging {
+	if d := Decide(v, amps(12), true, socOptions(), testNow); d.Action != ActionSkipNotCharging {
 		t.Errorf("Action = %v, want SkipNotCharging", d.Action)
 	}
 }
 
 func TestDoesNotResumeWhileAnOverrideIsActive(t *testing.T) {
 	v := lowSolarVehicle(vehState(StateStopped), vehLowSolarStop(testNow.Add(-time.Hour)), vehOverride())
-	if d := Decide(v, amps(12), socOptions(), testNow); d.Action != ActionSkipOverrideActive {
+	if d := Decide(v, amps(12), true, socOptions(), testNow); d.Action != ActionSkipOverrideActive {
 		t.Errorf("Action = %v, want SkipOverrideActive", d.Action)
 	}
 }
 
 func TestTheSocCapOutranksALowSolarResume(t *testing.T) {
 	v := lowSolarVehicle(vehState(StateStopped), vehLowSolarStop(testNow.Add(-time.Hour)), vehSoc(90))
-	if d := Decide(v, amps(12), socOptions(), testNow); d.Action != ActionSkipAtSocCap {
+	if d := Decide(v, amps(12), true, socOptions(), testNow); d.Action != ActionSkipAtSocCap {
 		t.Errorf("Action = %v, want SkipAtSocCap", d.Action)
 	}
 }
@@ -132,7 +132,7 @@ func TestUnpluggingClearsTheLowSolarMarker(t *testing.T) {
 
 func TestMissingSolarDataDoesNotStopARunningSession(t *testing.T) {
 	// A failed Enphase poll is not evidence of low production.
-	d := Decide(lowSolarVehicle(), nil, socOptions(), testNow)
+	d := Decide(lowSolarVehicle(), nil, true, socOptions(), testNow)
 
 	if d.Action != ActionSkipNoSolarData {
 		t.Errorf("Action = %v, want SkipNoSolarData", d.Action)

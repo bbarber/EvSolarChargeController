@@ -89,9 +89,14 @@ func skip(action ChargeAction, reason string) Decision {
 // Decide is the pure decision logic for the solar -> amps sync. It is free of I/O so the gating
 // rules — never wake a sleeping car, respect manual overrides — are directly testable.
 //
-// maxAmpsLastHour is nil when no readings landed in the trailing window; that is not evidence of
-// low production, so it must not stop a running session.
-func Decide(vehicle *VehicleState, maxAmpsLastHour *float64, opts ChargingOptions, now time.Time) Decision {
+// Two different situations both produce no solar figure, and they demand opposite responses:
+//
+//   - solarWindowOpen and maxAmpsLastHour nil — the poll failed. Missing data is not evidence of
+//     missing production, so a running session is left alone.
+//   - !solarWindowOpen — the sun is down. This car charges on solar or not at all, so a running
+//     session is stopped. It is recorded as a low-solar stop, which means it resumes by itself
+//     when production returns the next morning.
+func Decide(vehicle *VehicleState, maxAmpsLastHour *float64, solarWindowOpen bool, opts ChargingOptions, now time.Time) Decision {
 	if vehicle == nil {
 		return skip(ActionSkipNoVehicleState, "No telemetry received yet for any managed vehicle.")
 	}
@@ -124,6 +129,17 @@ func Decide(vehicle *VehicleState, maxAmpsLastHour *float64, opts ChargingOption
 		return Decision{Action: ActionStopCharging, Reason: fmt.Sprintf(
 			"%s reached %d%%, at or above the %d%% cap; stopping the charge session.",
 			vehicle.VIN, *soc, opts.MaxSocPercent)}
+	}
+
+	// The sun is down. Nothing this controller can match, so nothing should be drawing.
+	if !solarWindowOpen {
+		if state.IsActivelyCharging() {
+			return Decision{Action: ActionStopChargingLowSolar, Reason: fmt.Sprintf(
+				"Outside the solar window; stopping %s rather than charging %s from the grid.",
+				vehicle.VIN, "overnight")}
+		}
+		return skip(ActionSkipInsufficientSolar,
+			fmt.Sprintf("Outside the solar window; leaving %s stopped.", vehicle.VIN))
 	}
 
 	if maxAmpsLastHour == nil {

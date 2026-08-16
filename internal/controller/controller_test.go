@@ -165,6 +165,83 @@ func TestOutsideTheWindowNoEnphaseCallIsSpent(t *testing.T) {
 	}
 }
 
+// The window bounds the Enphase poll, not the controller's authority. Overnight the trailing
+// readings have aged out, so there is no solar data — but the state-of-charge cap must still hold,
+// or a car plugged in before dawn charges to 100% on grid power before the loop first runs.
+func TestTheSocCapIsEnforcedOutsideTheWindow(t *testing.T) {
+	solar := &fakeSolar{result: watts(3840, testNow)}
+	cmd := &fakeCommander{}
+	c, st := newController(t, solar, cmd)
+
+	night := time.Date(2026, 8, 11, 8, 0, 0, 0, time.UTC) // 03:00 America/Chicago
+
+	v := domain.NewVehicleState(testVIN, night)
+	v.ChargingState = domain.StateCharging
+	v.BatteryLevelPercent = intPtr(85) // above the 80% cap
+	if err := st.SaveVehicleState(context.Background(), v); err != nil {
+		t.Fatalf("SaveVehicleState: %v", err)
+	}
+
+	if err := c.Evaluate(context.Background(), night); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	if solar.calls != 0 {
+		t.Errorf("enphase calls = %d, want 0 — the poll stays inside the window", solar.calls)
+	}
+	if cmd.stops != 1 {
+		t.Fatalf("stops = %d, want 1 — the cap must be enforced at any hour", cmd.stops)
+	}
+	got, _ := st.GetVehicleState(context.Background(), testVIN)
+	if got.SocStopIssuedAt == nil {
+		t.Error("SocStopIssuedAt was not recorded")
+	}
+}
+
+// This car charges on solar or not at all. Once the sun is down there is nothing to match, so a
+// running session is stopped even well below the state-of-charge cap — that is the whole point.
+func TestOvernightChargingIsStoppedEvenBelowTheCap(t *testing.T) {
+	cmd := &fakeCommander{}
+	c, st := newController(t, &fakeSolar{}, cmd)
+
+	night := time.Date(2026, 8, 11, 8, 0, 0, 0, time.UTC) // 03:00 America/Chicago
+	chargingVehicle(t, st, night)                         // 50% SoC, charging
+
+	if err := c.Evaluate(context.Background(), night); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	if cmd.stops != 1 {
+		t.Fatalf("stops = %d, want 1 — charging past sunset is grid charging", cmd.stops)
+	}
+
+	// Recorded as a low-solar stop, not a cap stop, so it resumes by itself in the morning.
+	got, _ := st.GetVehicleState(context.Background(), testVIN)
+	if got.LowSolarStopIssuedAt == nil {
+		t.Error("LowSolarStopIssuedAt not recorded; the session would never auto-resume")
+	}
+	if got.SocStopIssuedAt != nil {
+		t.Error("SocStopIssuedAt was set for a sunset stop — that would block the morning resume")
+	}
+}
+
+// A failed poll *inside* the window is not the same as sunset: missing data is not evidence of
+// missing production, so a running session must survive it.
+func TestAFailedPollInsideTheWindowDoesNotStopTheSession(t *testing.T) {
+	solar := &fakeSolar{result: enphase.Result{Reason: enphase.ReasonTransport, Message: "boom"}}
+	cmd := &fakeCommander{}
+	c, st := newController(t, solar, cmd)
+	chargingVehicle(t, st, testNow)
+
+	if err := c.Evaluate(context.Background(), testNow); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	if cmd.stops != 0 {
+		t.Errorf("stops = %d, want 0 — a transport error is not sunset", cmd.stops)
+	}
+}
+
 func TestASuccessfulCycleRecordsAndCommands(t *testing.T) {
 	solar := &fakeSolar{result: watts(2880, testNow)} // 2880W / 240V = 12A
 	cmd := &fakeCommander{}

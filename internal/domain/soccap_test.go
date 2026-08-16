@@ -38,7 +38,7 @@ func vehSocStop(at time.Time) vehOpt {
 
 func TestStopsChargingAtOrAboveTheCap(t *testing.T) {
 	for _, soc := range []int{80, 81, 100} {
-		d := Decide(socVehicle(intPtr(soc)), amps(16), socOptions(), testNow)
+		d := Decide(socVehicle(intPtr(soc)), amps(16), true, socOptions(), testNow)
 
 		if d.Action != ActionStopCharging {
 			t.Errorf("soc %d: Action = %v, want StopCharging", soc, d.Action)
@@ -51,7 +51,7 @@ func TestStopsChargingAtOrAboveTheCap(t *testing.T) {
 
 func TestChargesNormallyBelowTheCap(t *testing.T) {
 	for _, soc := range []int{0, 50, 79} {
-		d := Decide(socVehicle(intPtr(soc)), amps(12), socOptions(), testNow)
+		d := Decide(socVehicle(intPtr(soc)), amps(12), true, socOptions(), testNow)
 
 		if d.Action != ActionSetAmps {
 			t.Errorf("soc %d: Action = %v, want SetAmps", soc, d.Action)
@@ -63,7 +63,7 @@ func TestChargesNormallyBelowTheCap(t *testing.T) {
 }
 
 func TestDoesNotSendAStopWhenAlreadyNotChargingAtTheCap(t *testing.T) {
-	d := Decide(socVehicle(intPtr(85), vehState(StateComplete)), amps(16), socOptions(), testNow)
+	d := Decide(socVehicle(intPtr(85), vehState(StateComplete)), amps(16), true, socOptions(), testNow)
 
 	if d.Action != ActionSkipAtSocCap {
 		t.Errorf("Action = %v, want SkipAtSocCap", d.Action)
@@ -76,13 +76,13 @@ func TestDoesNotSendAStopWhenAlreadyNotChargingAtTheCap(t *testing.T) {
 func TestIgnoresTheCapWhenStateOfChargeIsUnknown(t *testing.T) {
 	// Telemetry streams on change, so SoC may be absent early in a session. Refusing to charge on
 	// missing data would strand the car; the vehicle's own limit still applies.
-	if d := Decide(socVehicle(nil), amps(12), socOptions(), testNow); d.Action != ActionSetAmps {
+	if d := Decide(socVehicle(nil), amps(12), true, socOptions(), testNow); d.Action != ActionSetAmps {
 		t.Errorf("Action = %v, want SetAmps", d.Action)
 	}
 }
 
 func TestAManualOverrideOutranksTheCap(t *testing.T) {
-	d := Decide(socVehicle(intPtr(95), vehOverride()), amps(16), socOptions(), testNow)
+	d := Decide(socVehicle(intPtr(95), vehOverride()), amps(16), true, socOptions(), testNow)
 
 	if d.Action != ActionSkipOverrideActive {
 		t.Errorf("Action = %v, want SkipOverrideActive", d.Action)
@@ -96,10 +96,10 @@ func TestACustomCapIsHonoured(t *testing.T) {
 	opts := socOptions()
 	opts.MaxSocPercent = 60
 
-	if d := Decide(socVehicle(intPtr(65)), amps(16), opts, testNow); d.Action != ActionStopCharging {
+	if d := Decide(socVehicle(intPtr(65)), amps(16), true, opts, testNow); d.Action != ActionStopCharging {
 		t.Errorf("soc 65 against a 60%% cap: Action = %v, want StopCharging", d.Action)
 	}
-	if d := Decide(socVehicle(intPtr(55)), amps(16), opts, testNow); d.Action != ActionSetAmps {
+	if d := Decide(socVehicle(intPtr(55)), amps(16), true, opts, testNow); d.Action != ActionSetAmps {
 		t.Errorf("soc 55 against a 60%% cap: Action = %v, want SetAmps", d.Action)
 	}
 }

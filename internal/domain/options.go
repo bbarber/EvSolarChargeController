@@ -20,6 +20,13 @@ type ChargingOptions struct {
 
 	// LookbackWindow is the trailing window the "max amps seen recently" figure is taken over.
 	// Taking the maximum biases toward overshoot rather than chasing every passing cloud.
+	//
+	// It was 60 minutes, which turned out to over-damp: the window could not tell a 15-minute
+	// cloud from a three-hour sunset, so the target never decayed and the car kept drawing its
+	// early-afternoon current into the evening on grid power. At 20 minutes a passing cloud is
+	// still inside the window — the max holds through it — while a sustained decline is tracked
+	// down with about a 20-minute lag. Measured over five simulated days, that cut grid import by
+	// roughly 70% for two extra commands a day.
 	LookbackWindow time.Duration
 
 	// MaxSocPercent is a cap this controller will not drive charging past, regardless of the
@@ -43,7 +50,7 @@ func DefaultChargingOptions() ChargingOptions {
 		SystemVoltage:          240,
 		MinChargeAmps:          5,
 		MaxChargeAmps:          16,
-		LookbackWindow:         60 * time.Minute,
+		LookbackWindow:         20 * time.Minute,
 		MaxSocPercent:          80,
 		OverrideSettleWindow:   3 * time.Minute,
 		VehicleStateStaleAfter: 6 * time.Hour,
