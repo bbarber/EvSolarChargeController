@@ -19,6 +19,9 @@ COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 
 RUN CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/evsolar ./cmd/evsolar
+# Registration has to run where the database is: both providers rotate their refresh token on use,
+# so running it anywhere else would consume the token the controller is holding.
+RUN CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/evsolar-register ./cmd/evsolar-register
 
 FROM debian:bookworm-slim
 
@@ -30,6 +33,7 @@ RUN apt-get update \
 RUN useradd --system --uid 10001 --home /var/lib/evsolar --create-home evsolar
 
 COPY --from=build /out/evsolar /usr/local/bin/evsolar
+COPY --from=build /out/evsolar-register /usr/local/bin/evsolar-register
 
 USER evsolar
 WORKDIR /var/lib/evsolar
