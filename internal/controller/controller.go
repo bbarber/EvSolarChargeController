@@ -61,6 +61,14 @@ func New(store Store, solar SolarReader, commands Commander, window *domain.Poll
 	return &Controller{store: store, solar: solar, commands: commands, window: window, opts: opts, log: log}
 }
 
+// SetChargingOptions replaces the charging options. Used by tests to exercise a mode without
+// standing up a second controller.
+func (c *Controller) SetChargingOptions(opts domain.ChargingOptions) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.opts = opts
+}
+
 // HandleTelemetry decodes one record and folds it into the vehicle's state.
 func (c *Controller) HandleTelemetry(ctx context.Context, raw []byte) error {
 	obs, err := telemetry.DecodeBytes(raw, time.Now().UTC())
@@ -188,7 +196,7 @@ func (c *Controller) act(ctx context.Context, vehicle *domain.VehicleState, d do
 		// frame look like a person restarting the session.
 		vehicle.LowSolarStopIssuedAt = nil
 
-	case d.ShouldResume():
+	case d.ShouldResume(), d.ShouldStart():
 		if err := c.commands.StartCharging(ctx, vehicle.VIN, *d.TargetAmps); err != nil {
 			return err
 		}

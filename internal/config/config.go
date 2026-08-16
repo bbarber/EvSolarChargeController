@@ -75,6 +75,7 @@ func Load() (Config, error) {
 	cfg.Charging.LookbackWindow = envDuration("EVSOLAR_LOOKBACK", cfg.Charging.LookbackWindow, fail)
 	cfg.Charging.OverrideSettleWindow = envDuration("EVSOLAR_OVERRIDE_SETTLE", cfg.Charging.OverrideSettleWindow, fail)
 	cfg.Charging.VehicleStateStaleAfter = envDuration("EVSOLAR_STATE_STALE_AFTER", cfg.Charging.VehicleStateStaleAfter, fail)
+	cfg.Charging.StartWhenPluggedIn = envBool("EVSOLAR_START_WHEN_PLUGGED_IN", cfg.Charging.StartWhenPluggedIn, fail)
 
 	cfg.Window.TimeZone = env("EVSOLAR_TIMEZONE", cfg.Window.TimeZone)
 	cfg.Window.StartHourLocal = envInt("EVSOLAR_WINDOW_START_HOUR", cfg.Window.StartHourLocal, fail)
@@ -144,6 +145,19 @@ func envFloat(key string, fallback float64, fail func(string, ...any)) float64 {
 	v, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
 		fail("%s must be a number, got %q", key, raw)
+		return fallback
+	}
+	return v
+}
+
+func envBool(key string, fallback bool, fail func(string, ...any)) bool {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		fail("%s must be true or false, got %q", key, raw)
 		return fallback
 	}
 	return v

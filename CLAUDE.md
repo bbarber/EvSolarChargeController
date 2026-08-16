@@ -214,8 +214,9 @@ harmless, a retry storm is not.
 - **The daylight window bounds the Enphase poll, not the controller's authority.** The loop ticks
   around the clock. Conflating these once let a car plugged in at 04:30 reach 100% on grid power.
 - **A failed poll is not sunset.** Missing data must not stop a running session; missing sun must.
-- **Never send a command to a car that is not actively charging**, except to resume a session this
-  controller stopped for low solar. Anything else risks waking it.
+- **Never send a command to a car that is not actively charging**, with two exceptions: resuming a
+  session this controller stopped for low solar, and — only when `StartWhenPluggedIn` is set —
+  starting a car that telemetry currently reports as plugged in. Anything else risks waking it.
 - **An override persists until the car unplugs** — not until charging pauses or completes.
 - **Record `LastSetAmps` only after a command succeeds.** Recording it for a command the car never
   received makes the next telemetry frame look like a manual override.
