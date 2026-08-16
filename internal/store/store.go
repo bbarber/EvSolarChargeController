@@ -53,6 +53,11 @@ CREATE TABLE IF NOT EXISTS api_usage (
     PRIMARY KEY (provider, month)
 );
 
+CREATE TABLE IF NOT EXISTS wake_events (
+    vin TEXT NOT NULL,
+    at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS secrets (
     name       TEXT PRIMARY KEY,
     value      TEXT NOT NULL,
@@ -90,6 +95,7 @@ func Open(path string) (*Store, error) {
 	for _, stmt := range []string{
 		`ALTER TABLE vehicle_state ADD COLUMN online INTEGER`,
 		`ALTER TABLE vehicle_state ADD COLUMN online_at TEXT`,
+		`ALTER TABLE vehicle_state ADD COLUMN last_wake_at TEXT`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			db.Close()
@@ -157,7 +163,7 @@ func intFrom(v sql.NullInt64) *int {
 
 const vehicleColumns = `vin, charge_amps, reported_max_amps, battery_level_percent,
     soc_stop_issued_at, low_solar_stop_issued_at, charging_state, override_active,
-    override_detected_at, last_set_amps, last_set_at, last_updated, online, online_at`
+    override_detected_at, last_set_amps, last_set_at, last_updated, online, online_at, last_wake_at`
 
 // GetVehicleState returns nil (with no error) when the VIN has never reported.
 func (s *Store) GetVehicleState(ctx context.Context, vin string) (*domain.VehicleState, error) {
@@ -206,11 +212,12 @@ func scanVehicleState(row scanner) (*domain.VehicleState, error) {
 		lastUpdated      string
 		online           sql.NullInt64
 		onlineAt         sql.NullString
+		lastWakeAt       sql.NullString
 	)
 
 	if err := row.Scan(&v.VIN, &chargeAmps, &reportedMax, &batteryLevel, &socStop, &lowSolarStop,
 		&chargingState, &overrideActive, &overrideDetected, &lastSetAmps, &lastSetAt, &lastUpdated,
-		&online, &onlineAt); err != nil {
+		&online, &onlineAt, &lastWakeAt); err != nil {
 		return nil, err
 	}
 
@@ -242,6 +249,9 @@ func scanVehicleState(row scanner) (*domain.VehicleState, error) {
 	if v.OnlineAt, err = parseTime(onlineAt); err != nil {
 		return nil, err
 	}
+	if v.LastWakeAt, err = parseTime(lastWakeAt); err != nil {
+		return nil, err
+	}
 	if v.LastUpdated, err = time.Parse(timeLayout, lastUpdated); err != nil {
 		return nil, fmt.Errorf("parsing last_updated %q: %w", lastUpdated, err)
 	}
@@ -252,7 +262,7 @@ func scanVehicleState(row scanner) (*domain.VehicleState, error) {
 func (s *Store) SaveVehicleState(ctx context.Context, v *domain.VehicleState) error {
 	_, err := s.db.ExecContext(ctx, `
         INSERT INTO vehicle_state (`+vehicleColumns+`)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(vin) DO UPDATE SET
             charge_amps              = excluded.charge_amps,
             reported_max_amps        = excluded.reported_max_amps,
@@ -266,11 +276,12 @@ func (s *Store) SaveVehicleState(ctx context.Context, v *domain.VehicleState) er
             last_set_at              = excluded.last_set_at,
             last_updated             = excluded.last_updated,
             online                   = excluded.online,
-            online_at                = excluded.online_at`,
+            online_at                = excluded.online_at,
+            last_wake_at             = excluded.last_wake_at`,
 		v.VIN, nullInt(v.ChargeAmps), nullInt(v.ReportedMaxAmps), nullInt(v.BatteryLevelPercent),
 		nullTime(v.SocStopIssuedAt), nullTime(v.LowSolarStopIssuedAt), v.ChargingState.String(),
 		boolToInt(v.OverrideActive), nullTime(v.OverrideDetectedAt), nullInt(v.LastSetAmps),
-		nullTime(v.LastSetAt), formatTime(v.LastUpdated), nullBool(v.Online), nullTime(v.OnlineAt))
+		nullTime(v.LastSetAt), formatTime(v.LastUpdated), nullBool(v.Online), nullTime(v.OnlineAt), nullTime(v.LastWakeAt))
 	if err != nil {
 		return fmt.Errorf("saving vehicle state for %s: %w", v.VIN, err)
 	}
@@ -324,6 +335,19 @@ func (s *Store) MaxAmpsSince(ctx context.Context, since time.Time) (*float64, er
 	return &max.Float64, nil
 }
 
+// ReadingsAboveSince counts readings at or after since that clear minAmps. More than one is what
+// distinguishes a sustained window from a single sunbreak.
+func (s *Store) ReadingsAboveSince(ctx context.Context, since time.Time, minAmps float64) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM solar_readings WHERE reading_at >= ? AND amps >= ?`,
+		formatTime(since), minAmps).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("counting solar readings: %w", err)
+	}
+	return n, nil
+}
+
 // PruneSolarReadings drops readings older than before, keeping the table bounded.
 func (s *Store) PruneSolarReadings(ctx context.Context, before time.Time) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
@@ -375,6 +399,33 @@ func (s *Store) MonthlyCallCount(ctx context.Context, provider string, at time.T
 		return 0, fmt.Errorf("reading api usage for %s: %w", provider, err)
 	}
 	return count, nil
+}
+
+// ---------------------------------------------------------------------------
+// Wakes
+// ---------------------------------------------------------------------------
+
+// RecordWake logs a wake. Kept as individual events rather than a counter so the daily limit can
+// be enforced on a rolling local day and the cost stays auditable.
+func (s *Store) RecordWake(ctx context.Context, vin string, at time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO wake_events (vin, at) VALUES (?, ?)`, vin, formatTime(at))
+	if err != nil {
+		return fmt.Errorf("recording wake for %s: %w", vin, err)
+	}
+	return nil
+}
+
+// WakesSince counts wakes at or after since. The caller passes the local midnight, so the day
+// boundary matches the human one rather than UTC's.
+func (s *Store) WakesSince(ctx context.Context, vin string, since time.Time) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM wake_events WHERE vin = ? AND at >= ?`, vin, formatTime(since)).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("counting wakes for %s: %w", vin, err)
+	}
+	return n, nil
 }
 
 // ---------------------------------------------------------------------------

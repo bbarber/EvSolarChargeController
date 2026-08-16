@@ -108,6 +108,37 @@ func (c *Commander) SetChargingAmps(ctx context.Context, vin string, amps int) e
 	})
 }
 
+// Wake brings a sleeping vehicle online so a command can reach it.
+//
+// Tesla bills this at $0.02 — twenty times a command, the most expensive call in the API — and it
+// keeps the car awake for a while afterwards, draining the battery it is meant to fill. Callers
+// gate it hard; see domain.DecideWake.
+//
+// Deliberately does not go through withVehicle. That opens a signed session, which is precisely
+// what cannot be done with a sleeping car — it fails with "vehicle is offline or asleep" before a
+// wake could ever be sent. Wakeup is a plain Fleet API call and needs no session.
+func (c *Commander) Wake(ctx context.Context, vin string) error {
+	token, err := c.accessTokenFor(ctx, time.Now())
+	if err != nil {
+		return err
+	}
+
+	acct, err := account.New(token, c.opts.UserAgent)
+	if err != nil {
+		return fmt.Errorf("building the Tesla account client: %w", err)
+	}
+
+	car, err := acct.GetVehicle(ctx, vin, c.key, c.sessions)
+	if err != nil {
+		return fmt.Errorf("resolving vehicle %s: %w", vin, err)
+	}
+
+	if err := car.Wakeup(ctx); err != nil {
+		return fmt.Errorf("waking %s: %w", vin, err)
+	}
+	return nil
+}
+
 // StopCharging ends the session. Used at the state-of-charge cap and when solar cannot cover the
 // connector minimum.
 func (c *Commander) StopCharging(ctx context.Context, vin string) error {

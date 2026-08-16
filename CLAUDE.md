@@ -216,7 +216,12 @@ harmless, a retry storm is not.
 - **A failed poll is not sunset.** Missing data must not stop a running session; missing sun must.
 - **Never send a command to a car that is not actively charging**, with two exceptions: resuming a
   session this controller stopped for low solar, and — only when `StartWhenPluggedIn` is set —
-  starting a car that telemetry currently reports as plugged in. Anything else risks waking it.
+  starting a car that connectivity currently reports as online and plugged in.
+- **Reachability comes from connectivity events, never from data age.** A connected, parked car
+  sends nothing; it is indistinguishable from one asleep by timestamp alone.
+- **Waking is opt-in, day-restricted, rate-limited and counted.** It costs $0.02, drains the
+  battery it is meant to fill, and is the only action that disturbs a car that did not ask to be.
+  `domain.DecideWake` holds every gate; do not add a caller that bypasses it.
 - **An override persists until the car unplugs** — not until charging pauses or completes.
 - **Record `LastSetAmps` only after a command succeeds.** Recording it for a command the car never
   received makes the next telemetry frame look like a manual override.

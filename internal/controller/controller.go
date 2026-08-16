@@ -30,6 +30,7 @@ type Commander interface {
 	SetChargingAmps(ctx context.Context, vin string, amps int) error
 	StopCharging(ctx context.Context, vin string) error
 	StartCharging(ctx context.Context, vin string, amps int) error
+	Wake(ctx context.Context, vin string) error
 }
 
 // Store is the persistence the loop and the ingest share.
@@ -39,7 +40,10 @@ type Store interface {
 	SaveVehicleState(ctx context.Context, v *domain.VehicleState) error
 	AddSolarReading(ctx context.Context, at time.Time, watts, amps float64) error
 	MaxAmpsSince(ctx context.Context, since time.Time) (*float64, error)
+	ReadingsAboveSince(ctx context.Context, since time.Time, minAmps float64) (int, error)
 	PruneSolarReadings(ctx context.Context, before time.Time) (int64, error)
+	RecordWake(ctx context.Context, vin string, at time.Time) error
+	WakesSince(ctx context.Context, vin string, since time.Time) (int, error)
 }
 
 type Controller struct {
@@ -222,7 +226,66 @@ func (c *Controller) Evaluate(ctx context.Context, now time.Time) error {
 	decision := domain.Decide(vehicle, maxAmps, c.window.IsOpen(now), c.opts, now)
 	c.log.Info("decision", "action", decision.Action.String(), "reason", decision.Reason)
 
+	// A sleeping car cannot be commanded, so the decision above can only ever skip. Waking is the
+	// separate question of whether that is worth $0.02 and a battery-draining wake window.
+	if decision.Action == domain.ActionSkipNotCharging && c.opts.WakeToCharge {
+		if err := c.considerWake(ctx, vehicle, maxAmps, now); err != nil {
+			c.log.Error("wake failed", "error", err)
+		}
+		return nil
+	}
+
 	return c.act(ctx, vehicle, decision, now)
+}
+
+// considerWake evaluates every wake gate and, if they all pass, wakes the car. It does not charge:
+// the next tick sees an online car and takes it from there, which keeps the wake decision and the
+// charging decision independent.
+func (c *Controller) considerWake(ctx context.Context, vehicle *domain.VehicleState, maxAmps *float64, now time.Time) error {
+	if vehicle == nil {
+		return nil
+	}
+
+	local := c.window.ToLocal(now)
+	midnight := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, local.Location())
+
+	wakesToday, err := c.store.WakesSince(ctx, vehicle.VIN, midnight)
+	if err != nil {
+		return err
+	}
+
+	above, err := c.store.ReadingsAboveSince(ctx,
+		now.Add(-c.opts.LookbackWindow), float64(c.opts.MinChargeAmps)-0.5)
+	if err != nil {
+		return err
+	}
+
+	d := domain.DecideWake(vehicle, domain.WakeInputs{
+		MaxAmpsLastWindow:    maxAmps,
+		ReadingsAboveMinimum: above,
+		WakesToday:           wakesToday,
+		LocalNow:             local,
+	}, c.opts)
+
+	if !d.Wake {
+		c.log.Debug("not waking", "reason", d.Reason)
+		return nil
+	}
+
+	c.log.Info("waking the vehicle", "vin", vehicle.VIN, "reason", d.Reason,
+		"wakes_today", wakesToday, "limit", c.opts.MaxWakesPerDay)
+
+	if err := c.commands.Wake(ctx, vehicle.VIN); err != nil {
+		return err
+	}
+
+	// Recorded only on success, so a failed wake does not consume the daily allowance — but the
+	// cooldown is set either way by the caller retrying no sooner than the next tick.
+	if err := c.store.RecordWake(ctx, vehicle.VIN, now); err != nil {
+		return err
+	}
+	vehicle.LastWakeAt = &now
+	return c.store.SaveVehicleState(ctx, vehicle)
 }
 
 func (c *Controller) act(ctx context.Context, vehicle *domain.VehicleState, d domain.Decision, now time.Time) error {
