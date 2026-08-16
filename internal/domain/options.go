@@ -52,6 +52,31 @@ type ChargingOptions struct {
 	// It still sits behind every other gate — override, the state-of-charge cap, and production
 	// clearing the connector minimum are all checked first.
 	StartWhenPluggedIn bool
+
+	// WakeToCharge lets the controller wake a sleeping car to use available sun.
+	//
+	// Off by default, and the most carefully gated thing here. Waking is not what the "never poll"
+	// rule was protecting against — that rule exists so routine data collection does not
+	// incidentally wake a car parked far from a charger. A deliberate wake, on a car last seen
+	// plugged in, with sun we intend to use, is a different act. It is still rate-limited,
+	// day-restricted and counted, because it costs $0.02 a time and drains the battery it is
+	// trying to fill.
+	WakeToCharge bool
+
+	// WakeDays restricts waking to particular days. Empty means every day.
+	WakeDays []time.Weekday
+
+	// MaxWakesPerDay is a hard ceiling. Tesla sizes the $10 monthly discount at roughly two wakes
+	// a day for two vehicles, so this is their number rather than an arbitrary one.
+	MaxWakesPerDay int
+
+	// WakeCooldown is the minimum gap between wakes, which stops the worst failure mode: wake,
+	// car comes up, solar dips before the command lands, car sleeps, wake again.
+	WakeCooldown time.Duration
+
+	// WakeSocHeadroom is how far below the cap the battery must be for a wake to be worth it.
+	// Waking at 79% spends $0.02 and a battery-draining wake window for a few minutes of charge.
+	WakeSocHeadroom int
 }
 
 // DefaultChargingOptions holds the tuned values; every one is overridable from the environment.
@@ -64,6 +89,10 @@ func DefaultChargingOptions() ChargingOptions {
 		MaxSocPercent:          80,
 		OverrideSettleWindow:   3 * time.Minute,
 		VehicleStateStaleAfter: 6 * time.Hour,
+		WakeDays:               []time.Weekday{time.Friday, time.Saturday, time.Sunday},
+		MaxWakesPerDay:         2,
+		WakeCooldown:           time.Hour,
+		WakeSocHeadroom:        10,
 	}
 }
 

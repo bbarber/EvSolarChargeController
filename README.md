@@ -181,6 +181,11 @@ All settings come from the environment; see [deploy/.env.example](deploy/.env.ex
 | `EVSOLAR_TIMEZONE` | America/Chicago | Interprets the window hours |
 | `EVSOLAR_WINDOW_START_HOUR` / `_END_HOUR` | 9 / 18 | Daylight window; end is exclusive |
 | `EVSOLAR_START_WHEN_PLUGGED_IN` | false | Start an idle plugged-in car when there is sun for it |
+| `EVSOLAR_WAKE_TO_CHARGE` | false | Wake a sleeping plugged-in car to use available sun |
+| `EVSOLAR_WAKE_DAYS` | Fri,Sat,Sun | Days waking is permitted; empty means every day |
+| `EVSOLAR_MAX_WAKES_PER_DAY` | 2 | Hard ceiling; a wake costs $0.02 |
+| `EVSOLAR_WAKE_COOLDOWN` | 1h | Minimum gap between wakes |
+| `EVSOLAR_WAKE_SOC_HEADROOM` | 10 | Points below the cap required to justify a wake |
 | `EVSOLAR_ENPHASE_BUDGET` | 950 | Hard stop below the 1000/month cap |
 
 Credentials live in the `.env` file and, once rotated, in the SQLite database. Both Enphase and

@@ -76,6 +76,11 @@ func Load() (Config, error) {
 	cfg.Charging.OverrideSettleWindow = envDuration("EVSOLAR_OVERRIDE_SETTLE", cfg.Charging.OverrideSettleWindow, fail)
 	cfg.Charging.VehicleStateStaleAfter = envDuration("EVSOLAR_STATE_STALE_AFTER", cfg.Charging.VehicleStateStaleAfter, fail)
 	cfg.Charging.StartWhenPluggedIn = envBool("EVSOLAR_START_WHEN_PLUGGED_IN", cfg.Charging.StartWhenPluggedIn, fail)
+	cfg.Charging.WakeToCharge = envBool("EVSOLAR_WAKE_TO_CHARGE", cfg.Charging.WakeToCharge, fail)
+	cfg.Charging.MaxWakesPerDay = envInt("EVSOLAR_MAX_WAKES_PER_DAY", cfg.Charging.MaxWakesPerDay, fail)
+	cfg.Charging.WakeCooldown = envDuration("EVSOLAR_WAKE_COOLDOWN", cfg.Charging.WakeCooldown, fail)
+	cfg.Charging.WakeSocHeadroom = envInt("EVSOLAR_WAKE_SOC_HEADROOM", cfg.Charging.WakeSocHeadroom, fail)
+	cfg.Charging.WakeDays = envWeekdays("EVSOLAR_WAKE_DAYS", cfg.Charging.WakeDays, fail)
 
 	cfg.Window.TimeZone = env("EVSOLAR_TIMEZONE", cfg.Window.TimeZone)
 	cfg.Window.StartHourLocal = envInt("EVSOLAR_WINDOW_START_HOUR", cfg.Window.StartHourLocal, fail)
@@ -148,6 +153,38 @@ func envFloat(key string, fallback float64, fail func(string, ...any)) float64 {
 		return fallback
 	}
 	return v
+}
+
+// envWeekdays parses a comma-separated day list such as "Fri,Sat,Sun". An empty value means every
+// day; the zero-length slice is meaningful, so it is distinguished from the variable being unset.
+func envWeekdays(key string, fallback []time.Weekday, fail func(string, ...any)) []time.Weekday {
+	raw, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback
+	}
+	if strings.TrimSpace(raw) == "" {
+		return nil // explicitly unrestricted
+	}
+
+	names := map[string]time.Weekday{
+		"sun": time.Sunday, "mon": time.Monday, "tue": time.Tuesday, "wed": time.Wednesday,
+		"thu": time.Thursday, "fri": time.Friday, "sat": time.Saturday,
+	}
+
+	var out []time.Weekday
+	for _, part := range strings.Split(raw, ",") {
+		key3 := strings.ToLower(strings.TrimSpace(part))
+		if len(key3) > 3 {
+			key3 = key3[:3]
+		}
+		day, known := names[key3]
+		if !known {
+			fail("%s contains an unrecognised day %q", key, strings.TrimSpace(part))
+			continue
+		}
+		out = append(out, day)
+	}
+	return out
 }
 
 func envBool(key string, fallback bool, fail func(string, ...any)) bool {

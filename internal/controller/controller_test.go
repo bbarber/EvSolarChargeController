@@ -41,7 +41,16 @@ type fakeCommander struct {
 	setAmps  []int
 	stops    int
 	starts   []int
+	wakes    []string
 	failWith error
+}
+
+func (f *fakeCommander) Wake(ctx context.Context, vin string) error {
+	if f.failWith != nil {
+		return f.failWith
+	}
+	f.wakes = append(f.wakes, vin)
+	return nil
 }
 
 func (f *fakeCommander) SetChargingAmps(ctx context.Context, vin string, amps int) error {
@@ -294,6 +303,94 @@ func TestIdleCarIsLeftAloneWhenTheFlagIsOff(t *testing.T) {
 
 	if len(cmd.starts) != 0 || len(cmd.setAmps) != 0 || cmd.stops != 0 {
 		t.Errorf("commands were sent with the flag off: %+v", cmd)
+	}
+}
+
+// The wake path end to end: an asleep, plugged-in car on a permitted day with sustained sun
+// should produce a real wake, be recorded against the daily limit, and NOT be commanded — the next
+// tick sees an online car and takes it from there.
+func TestWakesASleepingPluggedInCar(t *testing.T) {
+	friday := time.Date(2026, 8, 14, 18, 0, 0, 0, time.UTC) // 13:00 America/Chicago, a Friday
+	solar := &fakeSolar{result: watts(2160, friday)}        // 9A
+	cmd := &fakeCommander{}
+	c, st := newController(t, solar, cmd)
+
+	opts := domain.DefaultChargingOptions()
+	opts.WakeToCharge = true
+	c.SetChargingOptions(opts)
+
+	// Two readings above the minimum, so the window is sustained rather than a sunbreak.
+	ctx := context.Background()
+	for _, at := range []time.Time{friday.Add(-15 * time.Minute), friday.Add(-5 * time.Minute)} {
+		if err := st.AddSolarReading(ctx, at, 2160, 9); err != nil {
+			t.Fatalf("AddSolarReading: %v", err)
+		}
+	}
+
+	offline := false
+	seen := friday.Add(-30 * time.Minute)
+	v := domain.NewVehicleState(testVIN, seen)
+	v.ChargingState = domain.StateStopped
+	v.BatteryLevelPercent = intPtr(55)
+	v.Online, v.OnlineAt = &offline, &seen
+	if err := st.SaveVehicleState(ctx, v); err != nil {
+		t.Fatalf("SaveVehicleState: %v", err)
+	}
+
+	if err := c.Evaluate(ctx, friday); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	if len(cmd.wakes) != 1 || cmd.wakes[0] != testVIN {
+		t.Fatalf("wakes = %v, want one for %s", cmd.wakes, testVIN)
+	}
+	if len(cmd.starts) != 0 || len(cmd.setAmps) != 0 {
+		t.Errorf("a sleeping car was commanded as well as woken: %+v", cmd)
+	}
+
+	midnight := time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)
+	if n, _ := st.WakesSince(ctx, testVIN, midnight); n != 1 {
+		t.Errorf("wakes recorded = %d, want 1", n)
+	}
+	got, _ := st.GetVehicleState(ctx, testVIN)
+	if got.LastWakeAt == nil {
+		t.Error("LastWakeAt not recorded; the cooldown would never apply")
+	}
+}
+
+// Same situation on a Wednesday must not wake.
+func TestDoesNotWakeOnADisallowedDay(t *testing.T) {
+	wednesday := time.Date(2026, 8, 12, 18, 0, 0, 0, time.UTC)
+	solar := &fakeSolar{result: watts(2160, wednesday)}
+	cmd := &fakeCommander{}
+	c, st := newController(t, solar, cmd)
+
+	opts := domain.DefaultChargingOptions()
+	opts.WakeToCharge = true
+	c.SetChargingOptions(opts)
+
+	ctx := context.Background()
+	for _, at := range []time.Time{wednesday.Add(-15 * time.Minute), wednesday.Add(-5 * time.Minute)} {
+		if err := st.AddSolarReading(ctx, at, 2160, 9); err != nil {
+			t.Fatalf("AddSolarReading: %v", err)
+		}
+	}
+
+	offline := false
+	seen := wednesday.Add(-30 * time.Minute)
+	v := domain.NewVehicleState(testVIN, seen)
+	v.ChargingState = domain.StateStopped
+	v.BatteryLevelPercent = intPtr(55)
+	v.Online, v.OnlineAt = &offline, &seen
+	if err := st.SaveVehicleState(ctx, v); err != nil {
+		t.Fatalf("SaveVehicleState: %v", err)
+	}
+
+	if err := c.Evaluate(ctx, wednesday); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if len(cmd.wakes) != 0 {
+		t.Errorf("woke on a Wednesday: %v", cmd.wakes)
 	}
 }
 

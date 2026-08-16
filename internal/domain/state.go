@@ -106,6 +106,9 @@ type VehicleState struct {
 	// reachability; a connectivity event does.
 	Online   *bool
 	OnlineAt *time.Time
+
+	// LastWakeAt is when this controller last woke the car, for the cooldown.
+	LastWakeAt *time.Time
 }
 
 func NewVehicleState(vin string, now time.Time) *VehicleState {
