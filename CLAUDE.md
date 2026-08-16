@@ -200,6 +200,18 @@ issuing a new one. The copy in SQLite is authoritative once the first refresh ha
 and never run a tool that refreshes a token anywhere other than where the database lives — that is
 why `evsolar-register` ships inside the image.
 
+**One horizon per question.** `LookbackWindow` (20m) is for targeting only — short, so the current
+tracks a declining sun. `SustainedWindow` (45m) is what the wake gate counts over. `ReadingRetention`
+(6h) is storage hygiene. Sharing a single value made the wake gate unsatisfiable: pruning at the
+lookback horizon deleted the previous reading moments before the gate counted it, leaving one
+reading where the gate needed two. Config validation now rejects a sustained window shorter than
+the lookback. This is the same mistake as the daylight window bounding both the call budget and the
+controller's authority — watch for it.
+
+**Enphase reading timestamps are not tick times.** They carry Enphase's `last_report_at`, roughly
+two minutes earlier. A test that uses tick times for readings will pass against pruning bugs that
+production hits, because the previous reading lands exactly on the boundary and survives.
+
 **Enphase allows 1000 calls/month.** 27/day is ~840/month. The budget guard hard-stops at 950
 *before* the request leaves the process. Failures are never retried within a run: a missed cycle is
 harmless, a retry storm is not.

@@ -206,7 +206,11 @@ func (c *Controller) Evaluate(ctx context.Context, now time.Time) error {
 			"at", c.window.Describe(now))
 	}
 
-	if _, err := c.store.PruneSolarReadings(ctx, now.Add(-c.opts.LookbackWindow)); err != nil {
+	// Prune on the retention horizon, not the lookback. Pruning at the lookback horizon deleted
+	// the previous reading moments before the wake gate counted it, leaving one reading where the
+	// gate needed two — so the gate could never pass. Targeting is unaffected: a max taken over
+	// the trailing 20 minutes does not change because older rows survive.
+	if _, err := c.store.PruneSolarReadings(ctx, now.Add(-c.opts.ReadingRetention)); err != nil {
 		c.log.Warn("pruning solar readings", "error", err)
 	}
 
@@ -255,7 +259,7 @@ func (c *Controller) considerWake(ctx context.Context, vehicle *domain.VehicleSt
 	}
 
 	above, err := c.store.ReadingsAboveSince(ctx,
-		now.Add(-c.opts.LookbackWindow), float64(c.opts.MinChargeAmps)-0.5)
+		now.Add(-c.opts.SustainedWindow), float64(c.opts.MinChargeAmps)-0.5)
 	if err != nil {
 		return err
 	}

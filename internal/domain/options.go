@@ -77,6 +77,22 @@ type ChargingOptions struct {
 	// WakeSocHeadroom is how far below the cap the battery must be for a wake to be worth it.
 	// Waking at 79% spends $0.02 and a battery-draining wake window for a few minutes of charge.
 	WakeSocHeadroom int
+
+	// SustainedWindow is how far back the wake gate looks to decide the sun is reliable rather
+	// than a sunbreak. It must be longer than the poll interval, or fewer than two readings can
+	// ever fall inside it.
+	//
+	// Deliberately not LookbackWindow. That one wants to be *short* so the target tracks a
+	// declining sun; this one wants to be long enough to see a trend. Sharing a value made the
+	// wake gate unsatisfiable: pruning at the lookback horizon deleted the previous reading
+	// moments before the gate counted, so the window held one reading and the gate wanted two.
+	SustainedWindow time.Duration
+
+	// ReadingRetention is how long readings are kept. Only storage hygiene — targeting and the
+	// wake gate each take their own window over whatever is retained, so this simply has to be
+	// longer than both. Keeping a couple of hours also leaves a real production history in the
+	// database rather than only in container logs.
+	ReadingRetention time.Duration
 }
 
 // DefaultChargingOptions holds the tuned values; every one is overridable from the environment.
@@ -93,6 +109,8 @@ func DefaultChargingOptions() ChargingOptions {
 		MaxWakesPerDay:         2,
 		WakeCooldown:           time.Hour,
 		WakeSocHeadroom:        10,
+		SustainedWindow:        45 * time.Minute,
+		ReadingRetention:       6 * time.Hour,
 	}
 }
 
