@@ -1,0 +1,28 @@
+#cloud-config
+# Prepares the box to run fleet-telemetry and tesla-http-proxy under Docker.
+#
+# The iptables work below is not optional. Oracle's Ubuntu images ship with a populated INPUT
+# chain ending in a REJECT rule, so a port opened in the VCN security list is still refused by
+# the instance itself. Opening a port therefore takes both, and this is the single most common
+# reason a fleet-telemetry endpoint looks correctly configured and still refuses connections.
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - docker.io
+  - docker-compose-v2
+  - iptables-persistent
+
+runcmd:
+  # Insert ACCEPT rules at the head of INPUT so they precede the image's trailing REJECT.
+  - iptables -I INPUT 1 -p tcp --dport ${telemetry_port} -m conntrack --ctstate NEW -j ACCEPT
+  - iptables -I INPUT 1 -p tcp --dport ${proxy_port} -m conntrack --ctstate NEW -j ACCEPT
+  - netfilter-persistent save
+  - systemctl enable --now docker
+  - usermod -aG docker ubuntu
+  # Certificates and server config live here; the Let's Encrypt renewal job writes into it.
+  - mkdir -p /etc/fleet-telemetry
+  - chmod 700 /etc/fleet-telemetry
+
+final_message: "evsolar telemetry host ready after $UPTIME seconds"

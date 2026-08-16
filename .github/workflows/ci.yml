@@ -17,62 +17,57 @@ concurrency:
 jobs:
   build-and-test:
     name: Build and test
-    runs-on: ubuntu-latest
+    # Native arm64 to match the deployment target, and free on public repositories.
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up .NET
-        uses: actions/setup-dotnet@v4
+      - uses: actions/setup-go@v5
         with:
-          global-json-file: global.json
+          go-version-file: go.mod
+          cache: true
 
-      - name: Restore
-        run: dotnet restore EvSolarChargeController.sln
-
-      - name: Build
-        run: dotnet build EvSolarChargeController.sln --configuration Release --no-restore
-
-      - name: Test
-        run: >-
-          dotnet test EvSolarChargeController.sln
-          --configuration Release
-          --no-build
-          --logger "trx;LogFileName=test-results.trx"
-          --results-directory ./TestResults
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results
-          path: ./TestResults
-          if-no-files-found: ignore
-
-  validate-infra:
-    name: Validate Bicep
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Bicep
+      # The ZeroMQ binding is cgo. Without these the telemetry package will not build.
+      - name: Install libzmq
         run: |
-          az bicep install
-          az bicep version
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libzmq3-dev pkg-config
 
-      - name: Build templates
-        # Compiling surfaces both syntax errors and linter warnings without needing Azure creds.
-        run: az bicep build --file infra/main.bicep --outfile /dev/null
-
-      - name: Fail on linter warnings
+      - name: Verify formatting
         run: |
-          set -o pipefail
-          output=$(az bicep build --file infra/main.bicep --stdout 2>&1 >/dev/null || true)
-          if [[ -n "$output" ]]; then
-            echo "$output"
-            echo "::error::Bicep reported warnings or errors"
+          unformatted=$(gofmt -l ./cmd ./internal)
+          if [[ -n "$unformatted" ]]; then
+            echo "::error::gofmt reported unformatted files:"
+            echo "$unformatted"
             exit 1
           fi
-          echo "No Bicep warnings."
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./... -race -count=1
+
+      - name: Build
+        run: go build ./...
+
+  validate-terraform:
+    name: Validate Terraform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Format check
+        run: terraform -chdir=infra/oracle fmt -check -diff
+
+      # No credentials needed: init -backend=false and validate check syntax and provider schemas
+      # without touching the tenancy.
+      - name: Validate
+        run: |
+          terraform -chdir=infra/oracle init -backend=false -input=false
+          terraform -chdir=infra/oracle validate
 
   lint-shell:
     name: Lint shell scripts
@@ -83,4 +78,4 @@ jobs:
       - name: ShellCheck
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck
-          shellcheck tools/seed-keyvault.sh tools/tesla-command-proxy/entrypoint.sh
+          shellcheck infra/oracle/launch-retry.sh tools/tesla-register-partner.sh

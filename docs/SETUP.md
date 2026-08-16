@@ -9,9 +9,11 @@ Legend: 🧑 needs a human (browser login, phone, or the vehicle) · 🤖 script
 
 ## 0. Prerequisites
 
-- Azure subscription `EvSolarChargeController` (`ff51dc3e-7430-4235-bce0-0537cd077543`)
-- Two free [DuckDNS](https://duckdns.org) hostnames (see step 0a)
-- `az`, `dotnet` 8, `func` v4, `openssl`, and Docker for local container builds
+- An Oracle Cloud tenancy. Its **home region is permanent**, so pick one close to you — and note
+  that not every region carries every Always Free shape (see
+  [ARCHITECTURE-DECISIONS.md](ARCHITECTURE-DECISIONS.md#2-everything-free-and-push-telemetry-cannot-both-hold-on-azure)).
+- Two free [DuckDNS](https://duckdns.org) hostnames (step 0a)
+- `oci`, `terraform`, `go` 1.26, `openssl`, and Docker
 
 ### 0a. 🧑 DuckDNS hostnames
 
@@ -21,10 +23,10 @@ addresses.
 | Hostname | A record points at | Serves |
 |---|---|---|
 | `evsolarchargecontroller.duckdns.org` | `185.199.108.153` (GitHub Pages) | the Tesla public key |
-| `<something>-tel.duckdns.org` | the `telemetryStaticIp` deployment output | fleet-telemetry, TCP 8443 |
+| `<something>-tel.duckdns.org` | the VM's public IP | fleet-telemetry, TCP 8443 |
 
-The second one's A record can't be set until the Container Apps environment exists (step 12), so
-create the name now and leave it pointing anywhere.
+The second one's A record can't be set until the VM exists (step 8), so create the name now and
+leave it pointing anywhere.
 
 Save the account token — one token covers all your domains:
 
@@ -45,13 +47,17 @@ by A record) rather than a service needing CNAME validation.
 2. Create an application. In **Client Details**, choose **Authorization Code and Machine-to-Machine**.
 3. Request scopes: `vehicle_device_data`, `vehicle_cmds`, `vehicle_charging_cmds`, plus
    `openid` and `offline_access`.
-4. Record the client ID and client secret into `.secrets/tesla.env` (git-ignored):
+4. Enable billing. Fleet API is pay-per-use against a $10/month discount; pushed telemetry for two
+   cars plus a few commands a day sits well inside it, but the account still needs billing set up.
+5. Record the client id into `.secrets/tesla.env` (git-ignored):
 
    ```
    TESLA_CLIENT_ID=...
-   TESLA_CLIENT_SECRET=...
    TESLA_REFRESH_TOKEN=
    ```
+
+   The client secret is not used by this controller — Tesla's refresh grant takes only `client_id`
+   and `refresh_token` — but keep it for the partner-token call in step 4.
 
 ## 2. 🤖 Generate the application key pair
 
@@ -61,8 +67,9 @@ openssl ecparam -name prime256v1 -genkey -noout -out fleet-key.pem
 openssl ec -in fleet-key.pem -pubout -out public-key.pem
 ```
 
-`fleet-key.pem` is the signing key used by the command proxy. It never leaves Key Vault and the
-mounted config share.
+`fleet-key.pem` signs every command **and** the telemetry configuration. It is paired to each
+vehicle as a virtual key, so losing or replacing it means re-pairing both cars by hand — with
+physical access. Back it up somewhere you trust.
 
 ## 3. 🤖 Host the public key on GitHub Pages
 
@@ -82,8 +89,7 @@ https://<app-domain>/.well-known/appspecific/com.tesla.3p.public-key.pem
 2. Set the repository variable `TESLA_APP_DOMAIN` to `evsolarchargecontroller.duckdns.org`.
 3. In repository **Settings → Pages**, set the source to **GitHub Actions**.
 4. Point the DuckDNS A record for that name at `185.199.108.153`.
-5. Push. The **Deploy public key site** workflow publishes `site/` and GitHub issues a certificate
-   automatically (it can take a few minutes on first setup).
+5. Push. The **Deploy public key site** workflow publishes `site/`.
 
 Verify before moving on — a failed fetch produces an unhelpful error during pairing:
 
@@ -98,32 +104,27 @@ curl -sI https://evsolarchargecontroller.duckdns.org/.well-known/appspecific/com
 
 1. Generate a partner authentication token and call the Fleet API
    [register](https://developer.tesla.com/docs/fleet-api/authentication/partner-tokens) endpoint
-   with your domain.
+   with your domain (`tools/tesla-register-partner.sh`).
 2. On each car's phone, open `https://tesla.com/_ak/<your-domain>` and approve.
    **This requires being in or near the vehicle with Bluetooth on**, once per car.
 
 ## 5. 🧑 Tesla OAuth — get a refresh token
 
-Complete the authorization-code flow in a browser, then put the resulting refresh token in
-`.secrets/tesla.env` as `TESLA_REFRESH_TOKEN`. The app rotates it from then on and writes each new
-value back to Key Vault.
+Complete the authorization-code flow in a browser (`tools/tesla-oauth.py`), then put the resulting
+refresh token in `.secrets/tesla.env` as `TESLA_REFRESH_TOKEN`. It seeds the database once; the
+controller rotates it from then on and the stored copy becomes authoritative.
 
 ## 6. 🧑 Enphase — dedicated application
 
-Already done. The app **EvSolarChargeController** on the Watt plan exists, with its credentials in
+The app **EvSolarChargeController** on the free Watt plan exists, with credentials in
 `.secrets/enphase.env`. It is deliberately separate from the existing PVOutput app so the two do
 not share the 1000-calls/month budget.
 
-Still outstanding:
-
-1. Authorize it and exchange the code for a refresh token:
+1. Authorize it and exchange the code for a refresh token (`tools/enphase-oauth.py`):
 
    ```
    https://api.enphaseenergy.com/oauth/authorize?response_type=code&client_id=$ENPHASE_CLIENT_ID&redirect_uri=<your-redirect>
    ```
-
-   The client id is in `.secrets/enphase.env`; the developer portal also shows the fully-formed
-   authorization URL.
 
    ```bash
    curl -X POST "https://api.enphaseenergy.com/oauth/token?grant_type=authorization_code&redirect_uri=<your-redirect>&code=<code>" \
@@ -139,127 +140,93 @@ Still outstanding:
 
 3. Fill `ENPHASE_REFRESH_TOKEN` and `ENPHASE_SYSTEM_ID` in `.secrets/enphase.env`.
 
-> The Enphase refresh token expires after **one month**. The timer refreshes it well within that,
-> but if the app is left switched off longer than a month, repeat this step.
+> The Enphase refresh token expires after **one month**. The controller refreshes it well within
+> that, but if it is left switched off longer than a month, repeat this step.
 
-## 7. 🤖 Generate shared secrets
-
-```bash
-openssl rand -base64 32   # -> INGEST_SHARED_SECRET
-openssl rand -base64 32   # -> PROXY_SHARED_SECRET
-```
-
-Put both in `.secrets/tesla.env`, and add them to the GitHub repository secrets
-`INGEST_SHARED_SECRET` and `PROXY_SHARED_SECRET` for the deploy workflow.
-
-## 8. 🤖 Deploy the base infrastructure
+## 7. 🤖 Build the network
 
 ```bash
-az account set --subscription ff51dc3e-7430-4235-bce0-0537cd077543
-az group create -n rg-evsolar-prod -l centralus
-
-az deployment group create \
-  -g rg-evsolar-prod \
-  -f infra/main.bicep \
-  -p infra/main.bicepparam \
-  -p ingestSharedSecret="$INGEST_SHARED_SECRET" proxySharedSecret="$PROXY_SHARED_SECRET"
+cd infra/oracle
+terraform init
+terraform apply
 ```
 
-This creates storage plus tables, Key Vault, Log Analytics, Application Insights, and the Function
-App. Container Apps and APIM stay off until their prerequisites exist.
+This creates the VCN, internet gateway, route table, security list and subnet. All of it is free.
 
-## 9. 🤖 Seed the secrets
+## 8. 🤖 Launch the instance
+
+Always Free A1 capacity is scarce, and "Out of host capacity" is the normal first answer:
 
 ```bash
-./tools/seed-keyvault.sh <key-vault-name-from-outputs>
+./launch-retry.sh          # cycles the availability domains until one frees up
 ```
 
-## 10. 🤖 Deploy the function code
+It stops immediately on any error that is **not** a capacity error, because those do not resolve by
+waiting — a 404 means the shape is not offered in the region at all.
+
+Consider converting the tenancy to **Pay As You Go** first. Always Free resources stay $0, it
+removes the idle-reclamation risk, and it is widely reported to improve capacity odds. Set a $1
+budget alert alongside it.
+
+Then point the telemetry DuckDNS name at the `public_ip` output.
+
+## 9. 🤖 Issue the telemetry certificate
+
+Set the repository variables `TELEMETRY_HOSTNAME`, `ACME_EMAIL`, `TELEMETRY_SSH_USER` (default
+`ubuntu`) and `TELEMETRY_DEPLOY_DIR` (default `/opt/evsolar`), and the secrets `DUCKDNS_TOKEN` and
+`TELEMETRY_SSH_KEY`. Then run the **Renew telemetry certificate** workflow.
+
+It issues over DNS-01 — nothing answers HTTP on that hostname, since it is a raw TLS listener on
+8443 — copies the certificate to the host, and restarts only the telemetry container.
+
+## 10. 🤖 Deploy
+
+On the VM:
 
 ```bash
-func azure functionapp publish <function-app-name>
+sudo mkdir -p /opt/evsolar && sudo chown ubuntu:ubuntu /opt/evsolar && cd /opt/evsolar
+# copy from deploy/: docker-compose.yml, .env (from .env.example), fleet-telemetry/config.json
+mkdir -p secrets && cp ~/fleet-key.pem secrets/fleet-key.pem && chmod 600 secrets/fleet-key.pem
+docker compose up -d
+docker compose logs -f controller
 ```
 
-Check Application Insights for the startup line listing the schedule, time zone and charge range.
-Missing configuration is reported there explicitly.
+The startup log prints the resolved window, limits, and the command key fingerprint. A mismatched
+key shows up here rather than as an unexplained rejected command later.
 
-## 11. 🤖 Build and publish the containers
+## 11. 🤖 Register telemetry on each vehicle
 
-Run the **Build containers** workflow, or locally:
+The configuration must be signed with the command key — the vehicle verifies it against the
+published public key before accepting a new destination:
 
 ```bash
-docker build -f src/EvSolarChargeController.TelemetryBridge/Dockerfile -t telemetry-bridge .
-docker build -f tools/tesla-command-proxy/Dockerfile -t tesla-command-proxy .
+evsolar-register \
+  -host "$TELEMETRY_HOSTNAME" -port 8443 \
+  -ca /opt/evsolar/fleet-telemetry/server-cert.pem \
+  -vins 7SAYGDEEXPA069171,5YJ3E1EA3KF428848 \
+  -client-id "$EVSOLAR_TESLA_CLIENT_ID"
+
+# poll until "synced" is true
+evsolar-register -status -vins 7SAYGDEEXPA069171
 ```
 
-Copy the resulting image references into `bridgeImage` and `teslaProxyImage` in
-`main.bicepparam`.
+The fields and intervals it requests are in `internal/tesla/telemetry_config.go`. `BatteryLevel` /
+`Soc` drive the state-of-charge cap — without them the cap silently never engages.
 
-## 12. 🧑 Prepare the telemetry config share
+Diagnose problems with the `fleet_telemetry_errors` endpoint.
 
-Create the `telemetry-config` file share in the storage account and upload:
+## 12. Verify end to end
 
-| File | What it is |
-|---|---|
-| `config.json` | from `tools/fleet-telemetry/config.example.json`, with your hostname |
-| `server-cert.pem`, `server-key.pem` | publicly trusted certificate for the telemetry FQDN |
-| `tesla-ca.pem` | Tesla's telemetry CA, used to verify the vehicle's client certificate |
-| `fleet-key.pem` | the EC private key from step 2 |
-
-`server-cert.pem` and `server-key.pem` are produced by the certificate workflow below — upload the
-rest by hand, then set `deployContainerApps = true` and re-run step 8.
-
-### 12a. 🤖 Point DNS and issue the telemetry certificate
-
-1. Take `telemetryStaticIp` from the deployment outputs and set the DuckDNS A record for your
-   telemetry hostname to it.
-2. Set these repository variables and secrets:
-
-   | Name | Kind | Value |
-   |---|---|---|
-   | `TELEMETRY_HOSTNAME` | variable | e.g. `evsolarchargecontroller-tel.duckdns.org` |
-   | `TELEMETRY_APP_NAME` | variable | container app name from the outputs |
-   | `STORAGE_ACCOUNT_NAME` | variable | from the outputs |
-   | `RESOURCE_GROUP` | variable | `rg-evsolar-prod` |
-   | `ACME_EMAIL` | variable | your email, for expiry notices |
-   | `DUCKDNS_TOKEN` | secret | from `.secrets/duckdns.env` |
-
-3. Run the **Renew telemetry certificate** workflow. It issues over DNS-01, uploads
-   `server-cert.pem` / `server-key.pem` to the config share, and restarts the app. It reruns
-   weekly and no-ops until the certificate is within 30 days of expiry.
-
-4. Validate with Tesla's
-   [`check_server_cert.sh`](https://github.com/teslamotors/fleet-telemetry/blob/main/tools/check_server_cert.sh),
-   using **port 8443**.
-
-## 13. 🧑 Register telemetry on each vehicle
-
-Call `fleet_telemetry_config` **through the command proxy** (it is a signed command), with your
-telemetry hostname, **port 8443**, the full Let's Encrypt chain as `ca`, and these fields:
-
-| Field | Interval |
-|---|---|
-| `DetailedChargeState` | 60s |
-| `ChargeAmps` | 60s |
-| `ChargeCurrentRequest` | 60s |
-| `ChargeCurrentRequestMax` | 300s |
-| `ChargePortLatch` | 60s |
-| `BatteryLevel` | 300s |
-| `Soc` | 300s |
-
-`BatteryLevel` / `Soc` drive the state-of-charge cap — without them the cap silently never engages.
-
-Poll the GET form of the same endpoint until `synced` is true. Diagnose problems with
-`fleet_telemetry_errors`.
-
-## 14. Verify end to end
-
-- `VehicleState` gains a row per VIN once telemetry flows.
-- `SolarReadings` gains a row every 20 minutes during daylight.
-- `ApiUsage` shows the monthly Enphase count climbing ~30/day.
-- Application Insights logs a decision line every cycle.
-- Change amps in the Tesla app while charging: within a cycle the logs should report
+- `docker compose logs controller` shows a decision line every 20 minutes during daylight.
+- The `solar_readings` table gains a row per cycle; `api_usage` climbs ~27/day.
+- `vehicle_state` gains a row per VIN once telemetry flows.
+- Change amps in the Tesla app while charging: within a cycle the log should report
   `SkipOverrideActive`. Unplug, and it should clear.
+
+```bash
+docker compose exec controller sqlite3 /var/lib/evsolar/evsolar.db \
+  "select vin, charging_state, charge_amps, last_set_amps, override_active from vehicle_state;"
+```
 
 ---
 
@@ -267,24 +234,33 @@ Poll the GET form of the same endpoint until `synced` is true. Diagnose problems
 
 | Credential | When | How |
 |---|---|---|
-| Enphase refresh token | automatic, per use | written to Key Vault by the app |
-| Tesla refresh token | automatic, per use | written to Key Vault by the app |
-| Enphase client secret | if compromised | regenerate in the developer portal, re-run step 9 |
-| Shared secrets | any time | regenerate, re-run step 9, redeploy container apps |
-| Telemetry TLS certificate | before expiry | replace on the file share, restart the container app |
+| Enphase refresh token | automatic, per use | written to SQLite by the controller |
+| Tesla refresh token | automatic, per use | written to SQLite by the controller |
+| Enphase client secret | if compromised | regenerate in the portal, update `.env`, restart |
+| Telemetry TLS certificate | before expiry | the weekly workflow; or re-run it manually |
+| Command key | only if compromised | regenerate, republish the public key, **re-pair both cars** |
+
+The `evsolar-data` volume holds both rotating refresh tokens. Losing it means re-authorizing
+Enphase and Tesla by hand, because each provider invalidates the previous token on use.
 
 ## Troubleshooting
 
-**Timer fires but nothing happens.** Check the decision reason in App Insights — the common causes
-are `SkipNotCharging` (correct: the car is asleep or unplugged) and `SkipOverrideActive`.
+**Nothing happens on a tick.** Check the decision reason — the common causes are `SkipNotCharging`
+(correct: the car is asleep or unplugged) and `SkipOverrideActive`.
 
-**`Enphase monthly call budget exhausted`.** Check the `ApiUsage` table. If the count is far above
-~30/day, something is calling outside the daylight window — verify `WEBSITE_TIME_ZONE`.
+**`Enphase monthly call budget exhausted`.** Check `api_usage`. If the count is far above ~27/day,
+something is polling outside the daylight window — verify `EVSOLAR_TIMEZONE`.
 
 **Override trips immediately after every command.** The car is likely reporting a different field
 than the one being compared, or clamping the request. Compare `ChargeAmps` against
-`ChargeCurrentRequest` in the telemetry logs; see open question 3 in
+`ChargeCurrentRequest` in the telemetry logs; see open question 2 in
 [ARCHITECTURE-DECISIONS.md](ARCHITECTURE-DECISIONS.md).
 
-**Commands return 200 but nothing changes.** The command was not signed. Confirm
-`Tesla__CommandMode=Proxy` and that the proxy is reachable.
+**Commands return success but nothing changes.** Confirm the key fingerprint in the startup log
+matches the key paired to the car, and that the virtual key is still present in the Tesla app.
+
+**No telemetry arrives.** Confirm the endpoint completes a TLS handshake from outside:
+`openssl s_client -connect "$TELEMETRY_HOSTNAME:8443"`. Both the VCN security list *and* the
+instance's own iptables must allow 8443 — Oracle's Ubuntu images ship an INPUT chain ending in
+REJECT, which is the single most common reason a correctly configured endpoint still refuses
+connections. `cloud-init.yaml` handles this on a fresh instance.

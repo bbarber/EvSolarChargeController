@@ -1,0 +1,53 @@
+{
+  "_comment": [
+    "Copy to config.json in this directory and set 'host' to the registered DuckDNS hostname.",
+    "The TLS certificate and key sit alongside it. Nothing here is secret, but server-key.pem is —",
+    "keep the directory to 0700."
+  ],
+
+  "host": "0.0.0.0",
+  "port": 8443,
+  "log_level": "info",
+  "json_log_enable": true,
+  "namespace": "evsolar",
+
+  "tls": {
+    "_comment": [
+      "mTLS terminates in this process. ca_file is deliberately omitted: fleet-telemetry embeds",
+      "Tesla's production CA (//go:embed files/prod_ca.crt) and uses it by default, so there is no",
+      "CA file to fetch or keep current. server_cert/server_key must be a publicly trusted",
+      "certificate for the hostname registered in fleet_telemetry_config — issued over DNS-01",
+      "because nothing answers HTTP on that name."
+    ],
+    "server_cert": "/etc/fleet-telemetry/server-cert.pem",
+    "server_key": "/etc/fleet-telemetry/server-key.pem"
+  },
+
+  "records": {
+    "_comment": "Only vehicle data ('V') is forwarded to the controller; the rest is logged locally.",
+    "V": ["zmq"],
+    "alerts": ["logger"],
+    "errors": ["logger"]
+  },
+
+  "zmq": {
+    "_comment": [
+      "Binds on all interfaces so the controller container can subscribe by service name. The port",
+      "is not published to the host, so it stays inside the compose network."
+    ],
+    "addr": "tcp://0.0.0.0:5284",
+    "verbose": false
+  },
+
+  "logger": {
+    "verbose": false
+  },
+
+  "transmit_decoded_records": false,
+
+  "rate_limit": {
+    "enabled": true,
+    "message_interval_time": 30,
+    "message_limit": 1000
+  }
+}

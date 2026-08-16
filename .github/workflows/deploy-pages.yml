@@ -28,8 +28,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Write CNAME
-        # The custom domain lives in a repository variable so it is not duplicated between the
-        # site and the Bicep parameters.
+        # The custom domain lives in a repository variable so the site and the Tesla partner
+        # registration cannot drift apart.
         run: |
           domain="${{ vars.TESLA_APP_DOMAIN }}"
           if [[ -z "$domain" ]]; then

@@ -1,11 +1,14 @@
-name: Build containers
+name: Build container
 
 on:
   push:
     branches: [main]
     paths:
-      - 'src/EvSolarChargeController.TelemetryBridge/**'
-      - 'tools/tesla-command-proxy/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'deploy/Dockerfile'
       - '.github/workflows/build-containers.yml'
   workflow_dispatch:
 
@@ -14,7 +17,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: build-containers-${{ github.ref }}
+  group: build-container-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -22,24 +25,19 @@ env:
 
 jobs:
   build:
-    name: Build ${{ matrix.image }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - image: telemetry-bridge
-            dockerfile: src/EvSolarChargeController.TelemetryBridge/Dockerfile
-          - image: tesla-command-proxy
-            dockerfile: tools/tesla-command-proxy/Dockerfile
+    name: Build evsolar
+    # Native arm64, because the telemetry host is an Ampere A1 — the only Always Free shape the
+    # tenancy's home region offers at all, since us-chicago-1 carries no E2 (x86) shapes.
+    # Arm-hosted runners are free on public repositories and avoid QEMU, which matters most for the
+    # cgo build: emulated, it is an order of magnitude slower than native.
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      # GHCR is free for public images, which keeps the whole stack inside free tiers —
-      # Azure Container Registry has no free SKU.
+      # GHCR is free for public images, which keeps the whole stack inside free tiers.
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -51,7 +49,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.image }}
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/evsolar
           tags: |
             type=sha,format=long
             type=raw,value=latest,enable={{is_default_branch}}
@@ -60,7 +58,10 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ${{ matrix.dockerfile }}
+          file: deploy/Dockerfile
+          # Only the architecture actually deployed. Add linux/amd64 here if a second target ever
+          # appears; the Dockerfile is architecture-agnostic, so nothing else has to change.
+          platforms: linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -70,9 +71,9 @@ jobs:
       - name: Summarize
         run: |
           {
-            echo "### ${{ matrix.image }}"
+            echo "### evsolar (linux/arm64)"
             echo
-            echo "Set the matching Bicep parameter to one of:"
+            echo "Pull on the telemetry host, then \`docker compose up -d\`:"
             echo '```'
             echo "${{ steps.meta.outputs.tags }}"
             echo '```'
