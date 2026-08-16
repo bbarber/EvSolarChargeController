@@ -59,9 +59,8 @@ Every 20 minutes inside the daylight window, the controller:
 
 1. Polls Enphase for current production, converts watts to amps at the configured service voltage,
    and stores the reading.
-2. Takes the maximum of the readings inside the trailing 20 minutes. Readings themselves are kept
-   for six hours — targeting, the wake gate and pruning each need a different horizon, and sharing
-   one silently broke the wake gate.
+2. Takes the maximum of the readings inside the trailing 20 minutes. Readings are never deleted —
+   a year of them is about a megabyte, and they are the only real measurement of this array.
 3. Reads the vehicle's last-known state and decides:
    - no telemetry, or telemetry older than 6 hours → **skip** (the car is probably asleep)
    - manual override active → **skip** until the car unplugs
@@ -189,7 +188,6 @@ All settings come from the environment; see [deploy/.env.example](deploy/.env.ex
 | `EVSOLAR_WAKE_COOLDOWN` | 1h | Minimum gap between wakes |
 | `EVSOLAR_WAKE_SOC_HEADROOM` | 10 | Points below the cap required to justify a wake |
 | `EVSOLAR_SUSTAINED_WINDOW` | 45m | How far back the wake gate looks for reliable sun |
-| `EVSOLAR_READING_RETENTION` | 6h | How long solar readings are kept |
 | `EVSOLAR_ENPHASE_BUDGET` | 950 | Hard stop below the 1000/month cap |
 
 Credentials live in the `.env` file and, once rotated, in the SQLite database. Both Enphase and

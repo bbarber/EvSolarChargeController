@@ -120,8 +120,9 @@ docker run --rm -v evsolar_evsolar-data:/d alpine sh -c \
 
 Tables: `vehicle_state`, `solar_readings`, `api_usage`, `secrets`.
 
-`solar_readings` holds only the trailing lookback window — older rows are pruned every cycle. Longer
-history exists only in container logs, which do not survive a rebuild.
+`solar_readings` is never pruned. A year is roughly a megabyte and it is the only real measurement
+of this array — the simulations still run on an invented 4.2 kW peak. `PruneSolarReadings` exists in
+the store but nothing calls it.
 
 ---
 
@@ -201,12 +202,12 @@ and never run a tool that refreshes a token anywhere other than where the databa
 why `evsolar-register` ships inside the image.
 
 **One horizon per question.** `LookbackWindow` (20m) is for targeting only — short, so the current
-tracks a declining sun. `SustainedWindow` (45m) is what the wake gate counts over. `ReadingRetention`
-(6h) is storage hygiene. Sharing a single value made the wake gate unsatisfiable: pruning at the
-lookback horizon deleted the previous reading moments before the gate counted it, leaving one
-reading where the gate needed two. Config validation now rejects a sustained window shorter than
-the lookback. This is the same mistake as the daylight window bounding both the call budget and the
-controller's authority — watch for it.
+tracks a declining sun. `SustainedWindow` (45m) is what the wake gate counts over. Sharing a single
+value made the wake gate unsatisfiable: pruning at the lookback horizon deleted the previous reading
+moments before the gate counted it, leaving one reading where the gate needed two. Config validation
+now rejects a sustained window shorter than the lookback, and nothing prunes at all. This is the
+same mistake as the daylight window bounding both the call budget and the controller's authority —
+watch for it.
 
 **Enphase reading timestamps are not tick times.** They carry Enphase's `last_report_at`, roughly
 two minutes earlier. A test that uses tick times for readings will pass against pruning bugs that
