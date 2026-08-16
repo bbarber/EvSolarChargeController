@@ -50,7 +50,10 @@ services:
       # The ZMQ PUB socket is reachable by service name on the internal network only; it is
       # deliberately not published to the host.
       EVSOLAR_ZMQ_ENDPOINT: tcp://fleet-telemetry:5284
-      EVSOLAR_ZMQ_TOPIC: V
+      # fleet-telemetry publishes on "<namespace>_<recordType>" (telemetry.BuildTopicName), and a
+      # ZMQ SUB filter is a prefix match — so subscribing to "V" silently matches nothing and every
+      # record is dropped with no error anywhere. Must agree with "namespace" in config.json.
+      EVSOLAR_ZMQ_TOPIC: evsolar_V
       EVSOLAR_DB_PATH: /var/lib/evsolar/evsolar.db
       EVSOLAR_TESLA_KEY_PATH: /etc/evsolar/fleet-key.pem
       EVSOLAR_TESLA_SESSION_CACHE: /var/lib/evsolar/sessions.json
