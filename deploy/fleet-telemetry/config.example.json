@@ -23,8 +23,12 @@
     "server_key": "/etc/fleet-telemetry/server-key.pem"
   },
 
+  "_records_comment": [
+    "Only vehicle data ('V') is forwarded to the controller; the rest is logged locally.",
+    "Note the comment lives OUTSIDE the records block: every key inside records must map to an",
+    "array of dispatchers, so a stray string there fails to unmarshal and the server panics."
+  ],
   "records": {
-    "_comment": "Only vehicle data ('V') is forwarded to the controller; the rest is logged locally.",
     "V": ["zmq"],
     "alerts": ["logger"],
     "errors": ["logger"]

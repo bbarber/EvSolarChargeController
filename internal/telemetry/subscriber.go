@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"syscall"
 	"time"
 
 	zmq "github.com/pebbe/zmq4"
@@ -59,8 +60,11 @@ func (s *Subscriber) Run(ctx context.Context, handle func(context.Context, []byt
 
 		frames, err := socket.RecvMessageBytes(0)
 		if err != nil {
-			if zmq.AsErrno(err) == zmq.Errno(zmq.ETIMEDOUT) {
-				continue // Idle window; the car is asleep or has nothing to report.
+			// A receive that hits SetRcvtimeo returns EAGAIN, not ETIMEDOUT — libzmq documents
+			// RCVTIMEO that way. Both are checked because this is the quiet path: a parked car
+			// reports nothing, so mistaking it for an error logs a warning every second forever.
+			if errno := zmq.AsErrno(err); errno == zmq.Errno(syscall.EAGAIN) || errno == zmq.ETIMEDOUT {
+				continue
 			}
 			if ctx.Err() != nil {
 				return nil
