@@ -66,6 +66,7 @@ Every 20 minutes inside the daylight window, the controller:
    - at or above the state-of-charge cap → **stop** once, then leave it alone
    - solar below the connector minimum → **stop** rather than draw the shortfall from the grid
    - solar recovered after our own low-solar stop → **resume**
+   - plugged in and idle, and `StartWhenPluggedIn` is set → **start** at the solar-matched current
    - not charging for any other reason → **skip**, and critically, send nothing that could wake it
    - already at the target → **skip** the redundant command
    - otherwise → clamp into `[MinChargeAmps, MaxChargeAmps]` and set the current
@@ -179,6 +180,7 @@ All settings come from the environment; see [deploy/.env.example](deploy/.env.ex
 | `EVSOLAR_STATE_STALE_AFTER` | 6h | Telemetry older than this means "asleep" |
 | `EVSOLAR_TIMEZONE` | America/Chicago | Interprets the window hours |
 | `EVSOLAR_WINDOW_START_HOUR` / `_END_HOUR` | 9 / 18 | Daylight window; end is exclusive |
+| `EVSOLAR_START_WHEN_PLUGGED_IN` | false | Start an idle plugged-in car when there is sun for it |
 | `EVSOLAR_ENPHASE_BUDGET` | 950 | Hard stop below the 1000/month cap |
 
 Credentials live in the `.env` file and, once rotated, in the SQLite database. Both Enphase and

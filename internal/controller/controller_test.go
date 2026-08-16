@@ -242,6 +242,59 @@ func TestAFailedPollInsideTheWindowDoesNotStopTheSession(t *testing.T) {
 	}
 }
 
+// The opt-in start has to survive the whole path, not just the decision: a plugged-in idle car
+// with sun available should produce an actual StartCharging command.
+func TestStartWhenPluggedInIssuesARealCommand(t *testing.T) {
+	solar := &fakeSolar{result: watts(1440, testNow)} // 6A
+	cmd := &fakeCommander{}
+	c, st := newController(t, solar, cmd)
+
+	opts := domain.DefaultChargingOptions()
+	opts.StartWhenPluggedIn = true
+	c.SetChargingOptions(opts)
+
+	v := domain.NewVehicleState(testVIN, testNow)
+	v.ChargingState = domain.StateStopped // plugged in, idle, nobody stopped it but the driver
+	v.BatteryLevelPercent = intPtr(63)
+	if err := st.SaveVehicleState(context.Background(), v); err != nil {
+		t.Fatalf("SaveVehicleState: %v", err)
+	}
+
+	if err := c.Evaluate(context.Background(), testNow); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	if len(cmd.starts) != 1 || cmd.starts[0] != 6 {
+		t.Fatalf("starts = %v, want [6]", cmd.starts)
+	}
+	got, _ := st.GetVehicleState(context.Background(), testVIN)
+	if got.LastSetAmps == nil || *got.LastSetAmps != 6 {
+		t.Errorf("LastSetAmps = %v, want 6", got.LastSetAmps)
+	}
+}
+
+// Same situation with the flag off must stay silent — this is the behaviour observed in the field.
+func TestIdleCarIsLeftAloneWhenTheFlagIsOff(t *testing.T) {
+	solar := &fakeSolar{result: watts(1440, testNow)}
+	cmd := &fakeCommander{}
+	c, st := newController(t, solar, cmd)
+
+	v := domain.NewVehicleState(testVIN, testNow)
+	v.ChargingState = domain.StateStopped
+	v.BatteryLevelPercent = intPtr(63)
+	if err := st.SaveVehicleState(context.Background(), v); err != nil {
+		t.Fatalf("SaveVehicleState: %v", err)
+	}
+
+	if err := c.Evaluate(context.Background(), testNow); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	if len(cmd.starts) != 0 || len(cmd.setAmps) != 0 || cmd.stops != 0 {
+		t.Errorf("commands were sent with the flag off: %+v", cmd)
+	}
+}
+
 func TestASuccessfulCycleRecordsAndCommands(t *testing.T) {
 	solar := &fakeSolar{result: watts(2880, testNow)} // 2880W / 240V = 12A
 	cmd := &fakeCommander{}

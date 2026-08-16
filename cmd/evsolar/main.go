@@ -76,6 +76,7 @@ func run() error {
 		"voltage", cfg.Charging.SystemVoltage,
 		"amps", fmt.Sprintf("%d-%d", cfg.Charging.MinChargeAmps, cfg.Charging.MaxChargeAmps),
 		"soc_cap", cfg.Charging.MaxSocPercent,
+		"start_when_plugged_in", cfg.Charging.StartWhenPluggedIn,
 		"enphase_budget", cfg.Enphase.MonthlyCallBudget,
 		"command_key", commander.KeyFingerprint(),
 		"database", cfg.DatabasePath)

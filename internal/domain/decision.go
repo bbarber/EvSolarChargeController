@@ -26,6 +26,10 @@ const (
 	// ActionResumeCharging resumes a session this controller stopped for low solar.
 	ActionResumeCharging
 
+	// ActionStartCharging begins a session on a car that is plugged in and idle but that this
+	// controller did not stop. Only reachable when StartWhenPluggedIn is set.
+	ActionStartCharging
+
 	// ActionSkipInsufficientSolar means not enough solar, and not currently charging.
 	ActionSkipInsufficientSolar
 
@@ -52,6 +56,7 @@ var chargeActionNames = map[ChargeAction]string{
 	ActionSkipAtSocCap:          "SkipAtSocCap",
 	ActionStopChargingLowSolar:  "StopChargingLowSolar",
 	ActionResumeCharging:        "ResumeCharging",
+	ActionStartCharging:         "StartCharging",
 	ActionSkipInsufficientSolar: "SkipInsufficientSolar",
 	ActionSkipNoVehicleState:    "SkipNoVehicleState",
 	ActionSkipNotCharging:       "SkipNotCharging",
@@ -81,6 +86,10 @@ func (d Decision) ShouldStop() bool {
 }
 
 func (d Decision) ShouldResume() bool { return d.Action == ActionResumeCharging }
+
+// ShouldStart is the opt-in case: a car plugged in and idle that this controller did not stop.
+// Handled the same way as a resume — start the session, then set the current.
+func (d Decision) ShouldStart() bool { return d.Action == ActionStartCharging }
 
 func skip(action ChargeAction, reason string) Decision {
 	return Decision{Action: action, Reason: reason}
@@ -170,12 +179,21 @@ func Decide(vehicle *VehicleState, maxAmpsLastHour *float64, solarWindowOpen boo
 	}
 
 	if !state.IsActivelyCharging() {
-		// Only resume a session this controller stopped for low solar. Anything else that is not
-		// charging is either the user's choice or an asleep vehicle, and a command could wake it.
+		// Resuming a session this controller stopped is always allowed: we know why it stopped.
 		if vehicle.LowSolarStopIssuedAt != nil && state.IsPluggedIn() {
 			return Decision{Action: ActionResumeCharging, TargetAmps: intPtr(target), Reason: fmt.Sprintf(
 				"Solar recovered to %.2fA; resuming %s at %dA.", amps, vehicle.VIN, target)}
 		}
+
+		// Starting a session nobody asked us to start is opt-in. It is safe here and nowhere else:
+		// the car is reporting telemetry and reports itself plugged in, so the usual worry — that a
+		// command wakes a sleeping vehicle — does not apply. Every other gate has already passed.
+		if opts.StartWhenPluggedIn && state.IsPluggedIn() {
+			return Decision{Action: ActionStartCharging, TargetAmps: intPtr(target), Reason: fmt.Sprintf(
+				"%s is plugged in and idle with %.2fA available; starting at %dA.",
+				vehicle.VIN, amps, target)}
+		}
+
 		return skip(ActionSkipNotCharging, fmt.Sprintf(
 			"%s is %s; not sending any command (avoids waking the vehicle).", vehicle.VIN, state))
 	}

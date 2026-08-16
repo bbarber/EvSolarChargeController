@@ -42,6 +42,16 @@ type ChargingOptions struct {
 	// VehicleStateStaleAfter is the age past which telemetry is treated as unknown rather than
 	// authoritative — the car is probably asleep.
 	VehicleStateStaleAfter time.Duration
+
+	// StartWhenPluggedIn lets the controller begin a session on a car that is plugged in and idle
+	// but that this controller did not stop — a car you plugged in and left, with the sun out.
+	//
+	// Off by default, because the general rule is to never command a car that is not already
+	// charging: a command can wake a sleeping vehicle. This is the one safe exception, and only
+	// because telemetry has just told us the car is plugged in and awake enough to be reporting.
+	// It still sits behind every other gate — override, the state-of-charge cap, and production
+	// clearing the connector minimum are all checked first.
+	StartWhenPluggedIn bool
 }
 
 // DefaultChargingOptions holds the tuned values; every one is overridable from the environment.
