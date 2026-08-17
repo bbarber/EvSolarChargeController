@@ -75,6 +75,17 @@ func (f *fakeCommander) StartCharging(ctx context.Context, vin string, amps int)
 	return nil
 }
 
+func storeOpen(t *testing.T) (*store.Store, error) {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err == nil {
+		t.Cleanup(func() { st.Close() })
+	}
+	return st, err
+}
+
+func quietLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
 func newController(t *testing.T, solar SolarReader, cmd Commander) (*Controller, *store.Store) {
 	t.Helper()
 
@@ -90,7 +101,7 @@ func newController(t *testing.T, solar SolarReader, cmd Commander) (*Controller,
 	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(st, solar, cmd, window, domain.DefaultChargingOptions(), log), st
+	return New([]string{testVIN}, st, solar, cmd, window, domain.DefaultChargingOptions(), log), st
 }
 
 func chargingVehicle(t *testing.T, st *store.Store, at time.Time) {
@@ -608,7 +619,7 @@ func TestTelemetryRejectsGarbageWithoutTouchingState(t *testing.T) {
 		t.Error("expected a decode error")
 	}
 
-	got, _ := st.LatestVehicleState(context.Background())
+	got, _ := st.GetVehicleState(context.Background(), testVIN)
 	if got != nil {
 		t.Errorf("a malformed frame created state: %+v", got)
 	}

@@ -33,7 +33,9 @@ CREATE TABLE IF NOT EXISTS vehicle_state (
     last_set_at              TEXT,
     last_updated             TEXT    NOT NULL,
     online                   INTEGER,
-    online_at                TEXT
+    online_at                TEXT,
+    at_home                  INTEGER,
+    fast_charger             INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS solar_readings (
@@ -96,6 +98,8 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE vehicle_state ADD COLUMN last_wake_at TEXT`,
 		`ALTER TABLE vehicle_state ADD COLUMN session TEXT NOT NULL DEFAULT 'Auto'`,
 		`ALTER TABLE vehicle_state ADD COLUMN session_since TEXT`,
+		`ALTER TABLE vehicle_state ADD COLUMN at_home INTEGER`,
+		`ALTER TABLE vehicle_state ADD COLUMN fast_charger INTEGER`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			db.Close()
@@ -186,27 +190,12 @@ func intFrom(v sql.NullInt64) *int {
 
 const vehicleColumns = `vin, charge_amps, reported_max_amps, battery_level_percent,
     charging_state, session, session_since, last_set_amps, last_set_at, last_updated,
-    online, online_at, last_wake_at`
+    online, online_at, last_wake_at, at_home, fast_charger`
 
 // GetVehicleState returns nil (with no error) when the VIN has never reported.
 func (s *Store) GetVehicleState(ctx context.Context, vin string) (*domain.VehicleState, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT `+vehicleColumns+` FROM vehicle_state WHERE vin = ?`, vin)
-
-	state, err := scanVehicleState(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	return state, err
-}
-
-// LatestVehicleState returns whichever managed vehicle reported most recently.
-//
-// One wall connector is shared between the cars, so at most one is plugged in at a time; the most
-// recent reporter is the one the control loop should act on.
-func (s *Store) LatestVehicleState(ctx context.Context) (*domain.VehicleState, error) {
-	row := s.db.QueryRowContext(ctx,
-		`SELECT `+vehicleColumns+` FROM vehicle_state ORDER BY last_updated DESC LIMIT 1`)
 
 	state, err := scanVehicleState(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -234,17 +223,27 @@ func scanVehicleState(row scanner) (*domain.VehicleState, error) {
 		online        sql.NullInt64
 		onlineAt      sql.NullString
 		lastWakeAt    sql.NullString
+		atHome        sql.NullInt64
+		fastCharger   sql.NullInt64
 	)
 
 	if err := row.Scan(&v.VIN, &chargeAmps, &reportedMax, &batteryLevel,
 		&chargingState, &session, &sessionSince, &lastSetAmps, &lastSetAt, &lastUpdated,
-		&online, &onlineAt, &lastWakeAt); err != nil {
+		&online, &onlineAt, &lastWakeAt, &atHome, &fastCharger); err != nil {
 		return nil, err
 	}
 
 	if online.Valid {
 		b := online.Int64 != 0
 		v.Online = &b
+	}
+	if atHome.Valid {
+		b := atHome.Int64 != 0
+		v.AtHome = &b
+	}
+	if fastCharger.Valid {
+		b := fastCharger.Int64 != 0
+		v.FastCharger = &b
 	}
 
 	v.ChargeAmps = intFrom(chargeAmps)
@@ -277,7 +276,7 @@ func scanVehicleState(row scanner) (*domain.VehicleState, error) {
 func (s *Store) SaveVehicleState(ctx context.Context, v *domain.VehicleState) error {
 	_, err := s.db.ExecContext(ctx, `
         INSERT INTO vehicle_state (`+vehicleColumns+`)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(vin) DO UPDATE SET
             charge_amps           = excluded.charge_amps,
             reported_max_amps     = excluded.reported_max_amps,
@@ -290,11 +289,14 @@ func (s *Store) SaveVehicleState(ctx context.Context, v *domain.VehicleState) er
             last_updated          = excluded.last_updated,
             online                = excluded.online,
             online_at             = excluded.online_at,
-            last_wake_at          = excluded.last_wake_at`,
+            last_wake_at          = excluded.last_wake_at,
+            at_home               = excluded.at_home,
+            fast_charger          = excluded.fast_charger`,
 		v.VIN, nullInt(v.ChargeAmps), nullInt(v.ReportedMaxAmps), nullInt(v.BatteryLevelPercent),
 		v.ChargingState.String(), v.Session.String(), nullTime(v.SessionSince),
 		nullInt(v.LastSetAmps), nullTime(v.LastSetAt), formatTime(v.LastUpdated),
-		nullBool(v.Online), nullTime(v.OnlineAt), nullTime(v.LastWakeAt))
+		nullBool(v.Online), nullTime(v.OnlineAt), nullTime(v.LastWakeAt),
+		nullBool(v.AtHome), nullBool(v.FastCharger))
 	if err != nil {
 		return fmt.Errorf("saving vehicle state for %s: %w", v.VIN, err)
 	}

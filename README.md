@@ -123,6 +123,8 @@ On each evaluation, the controller:
 3. Reads the vehicle's last-known state and decides:
    - nothing heard on either channel for 6 hours → **skip** (genuinely unknown); a car
      connectivity says is *asleep* is not unknown — it proceeds to the wake gates
+   - not at the home connector, or on a DC fast charger → **skip everything**, including stops —
+     a road-trip Supercharger session is not ours to end
    - manual override active → **skip** until the car unplugs
    - at or above the state-of-charge cap → **stop** once, then leave it alone
    - solar below the connector minimum → **stop** rather than draw the shortfall from the grid
@@ -271,6 +273,7 @@ All settings come from the environment; see [deploy/.env.example](deploy/.env.ex
 | `EVSOLAR_WAKE_COOLDOWN` | 1h | Minimum gap between wakes |
 | `EVSOLAR_WAKE_SOC_HEADROOM` | 10 | Points below the cap required to justify a wake |
 | `EVSOLAR_SUSTAINED_WINDOW` | 45m | How far back the wake gate looks for reliable sun |
+| `EVSOLAR_HOME_LAT` / `_LON` / `_RADIUS_M` | unset / 150 | Manage only the home connector; unset manages everywhere |
 | `EVSOLAR_ENPHASE_BUDGET` | 950 | Hard stop below the 1000/month cap |
 
 Credentials live in the `.env` file and, once rotated, in the SQLite database. Both Enphase and

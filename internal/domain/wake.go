@@ -85,6 +85,17 @@ func DecideWake(vehicle *VehicleState, in WakeInputs, opts ChargingOptions) Wake
 		return noWake("%s was last seen %s, not plugged in.", vehicle.VIN, vehicle.ChargingState)
 	}
 
+	// Never wake a car that is not known to be at home. Plugged in somewhere else means someone
+	// else's charger, and the wake would at best be wasted.
+	if opts.HomeConfigured() {
+		if vehicle.AtHome == nil {
+			return noWake("%s has never reported a position; not waking on a guess.", vehicle.VIN)
+		}
+		if !*vehicle.AtHome {
+			return noWake("%s was last seen away from home.", vehicle.VIN)
+		}
+	}
+
 	soc := vehicle.BatteryLevelPercent
 	if soc == nil {
 		return noWake("State of charge unknown for %s.", vehicle.VIN)

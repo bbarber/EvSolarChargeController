@@ -78,6 +78,18 @@ type ChargingOptions struct {
 	// Waking at 79% spends $0.02 and a battery-draining wake window for a few minutes of charge.
 	WakeSocHeadroom int
 
+	// HomeLatitude/HomeLongitude/HomeRadiusM define the home wall connector's position. When set,
+	// the controller manages ONLY sessions at home: a Supercharger stop on a road trip, or a
+	// friend's L2, must never have its session stopped for "sunset" by a controller a thousand
+	// miles from the array it is matching.
+	//
+	// A coordinate rather than a charger id because the telemetry schema simply has no charger
+	// identity — no serial, nothing naming the EVSE. The coordinate is compared in-process and
+	// only the resulting boolean is stored; raw positions are never persisted.
+	HomeLatitude  float64
+	HomeLongitude float64
+	HomeRadiusM   float64
+
 	// SustainedWindow is how far back the wake gate looks to decide the sun is reliable rather
 	// than a sunbreak. It must be longer than the poll interval, or fewer than two readings can
 	// ever fall inside it.
@@ -104,7 +116,14 @@ func DefaultChargingOptions() ChargingOptions {
 		WakeCooldown:           time.Hour,
 		WakeSocHeadroom:        10,
 		SustainedWindow:        45 * time.Minute,
+		HomeRadiusM:            150,
 	}
+}
+
+// HomeConfigured reports whether the home gate is active. Unset coordinates mean the gate is off
+// and every session is managed — the behaviour before the gate existed.
+func (o ChargingOptions) HomeConfigured() bool {
+	return o.HomeLatitude != 0 || o.HomeLongitude != 0
 }
 
 // PollingWindowOptions bounds the daylight hours in which solar is polled at all.

@@ -152,3 +152,55 @@ func TestRepeatedFramesDoNotRepeatCommands(t *testing.T) {
 		t.Fatalf("setAmps = %v, want exactly one command across five identical frames", cmd.setAmps)
 	}
 }
+
+// Two cars, one wall connector. The car being driven around town reports constantly — battery
+// level changes while driving — and must not out-shout the one sitting plugged in at home.
+// Before per-VIN evaluation, the loop acted on whichever car reported most recently.
+func TestTheDrivenCarDoesNotEclipseTheChargingOne(t *testing.T) {
+	const bessie = "7SAYGDEEXPA069171"
+	now := time.Date(2026, 8, 16, 19, 41, 0, 0, time.UTC)
+
+	solar := &fakeSolar{}
+	cmd := &fakeCommander{}
+
+	st, err := storeOpen(t)
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	window, _ := domain.NewPollingWindow(domain.DefaultPollingWindowOptions())
+	log := quietLog()
+	c := New([]string{testVIN, bessie}, st, solar, cmd, window, domain.DefaultChargingOptions(), log)
+	c.now = func() time.Time { return now }
+
+	ctx := context.Background()
+	if err := st.AddSolarReading(ctx, now.Add(-5*time.Minute), 2160, 9); err != nil {
+		t.Fatalf("AddSolarReading: %v", err)
+	}
+
+	// Tessie: plugged in and charging at home, reported ten minutes ago.
+	tessie := domain.NewVehicleState(testVIN, now.Add(-10*time.Minute))
+	tessie.ChargingState = domain.StateCharging
+	tessie.BatteryLevelPercent = intPtr(50)
+	if err := st.SaveVehicleState(ctx, tessie); err != nil {
+		t.Fatalf("SaveVehicleState: %v", err)
+	}
+
+	// Bessie: being driven, reporting RIGHT NOW — the more recent reporter.
+	driving := domain.NewVehicleState(bessie, now)
+	driving.ChargingState = domain.StateDisconnected
+	driving.BatteryLevelPercent = intPtr(70)
+	if err := st.SaveVehicleState(ctx, driving); err != nil {
+		t.Fatalf("SaveVehicleState: %v", err)
+	}
+
+	if err := c.Evaluate(ctx, now); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	if len(cmd.setAmps) != 1 || cmd.setAmps[0] != 9 {
+		t.Fatalf("setAmps = %v, want [9] — Tessie's session must be managed despite Bessie reporting later", cmd.setAmps)
+	}
+	if cmd.stops != 0 && len(cmd.starts) == 0 {
+		t.Errorf("unexpected commands: %+v", cmd)
+	}
+}

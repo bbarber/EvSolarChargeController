@@ -48,6 +48,10 @@ const (
 
 	// ActionSkipAlreadyAtTarget means the target equals what we already set.
 	ActionSkipAlreadyAtTarget
+
+	// ActionSkipNotAtHome means the session is not at the home wall connector — a road-trip
+	// Supercharger, a friend's garage — and this controller has no business touching it.
+	ActionSkipNotAtHome
 )
 
 var chargeActionNames = map[ChargeAction]string{
@@ -63,6 +67,7 @@ var chargeActionNames = map[ChargeAction]string{
 	ActionSkipOverrideActive:    "SkipOverrideActive",
 	ActionSkipNoSolarData:       "SkipNoSolarData",
 	ActionSkipAlreadyAtTarget:   "SkipAlreadyAtTarget",
+	ActionSkipNotAtHome:         "SkipNotAtHome",
 }
 
 func (a ChargeAction) String() string {
@@ -141,6 +146,24 @@ func Decide(vehicle *VehicleState, maxAmpsLastHour *float64, solarWindowOpen boo
 	}
 
 	state := vehicle.ChargingState
+
+	// Sessions away from home are never touched, in either direction: no amps, no stops, no
+	// wakes. The sunset stop killing a road-trip Supercharger session was the failure mode here —
+	// hence the DC check applying even before AtHome is known.
+	if opts.HomeConfigured() {
+		if vehicle.FastCharger != nil && *vehicle.FastCharger {
+			return skip(ActionSkipNotAtHome, fmt.Sprintf(
+				"%s is on a DC fast charger; that session is not ours to manage.", vehicle.VIN))
+		}
+		if vehicle.AtHome == nil {
+			return skip(ActionSkipNotAtHome, fmt.Sprintf(
+				"%s has not reported a position yet; not commanding until it is known to be home.", vehicle.VIN))
+		}
+		if !*vehicle.AtHome {
+			return skip(ActionSkipNotAtHome, fmt.Sprintf(
+				"%s is not at the home connector; leaving that session alone.", vehicle.VIN))
+		}
+	}
 
 	// The cap is checked before the charging test so an already-stopped car at the cap reports the
 	// real reason rather than a generic "not charging".

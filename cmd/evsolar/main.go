@@ -67,7 +67,7 @@ func run() error {
 		return err
 	}
 
-	ctrl := controller.New(db, solar, commander, window, cfg.Charging, log.With("component", "controller"))
+	ctrl := controller.New(cfg.VINs, db, solar, commander, window, cfg.Charging, log.With("component", "controller"))
 	subscriber := telemetry.NewSubscriber(cfg.ZMQEndpoint, cfg.ZMQTopic, log.With("component", "telemetry"))
 
 	log.Info("starting",

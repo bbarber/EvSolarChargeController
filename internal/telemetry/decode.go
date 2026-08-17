@@ -71,6 +71,18 @@ func Decode(payload *protos.Payload, fallbackNow time.Time) (domain.Observation,
 				obs.ChargingState = &state
 			}
 
+		case protos.Field_Location:
+			if loc, ok := datum.Value.Value.(*protos.Value_LocationValue); ok && loc.LocationValue != nil {
+				lat, lon := loc.LocationValue.Latitude, loc.LocationValue.Longitude
+				obs.Latitude, obs.Longitude = &lat, &lon
+			}
+
+		case protos.Field_FastChargerPresent:
+			if b, ok := datum.Value.Value.(*protos.Value_BooleanValue); ok {
+				v := b.BooleanValue
+				obs.FastCharger = &v
+			}
+
 		case protos.Field_ChargePortLatch:
 			if latch, ok := datum.Value.Value.(*protos.Value_ChargePortLatchValue); ok {
 				// Only an explicit Disengaged clears an override. Unknown and SNA are absence of
