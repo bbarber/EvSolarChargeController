@@ -42,7 +42,9 @@ REDIRECT_URI = f"http://localhost:{REDIRECT_PORT}/callback"
 
 # offline_access is what makes the response include a refresh token; without it the grant expires
 # in hours and the timer breaks overnight.
-SCOPES = "openid offline_access vehicle_device_data vehicle_cmds vehicle_charging_cmds"
+# vehicle_location is required to subscribe to the Location telemetry field, which drives the
+# at-home gate. Tesla returns 403 "missing scopes vehicle_location" on registration without it.
+SCOPES = "openid offline_access vehicle_device_data vehicle_location vehicle_cmds vehicle_charging_cmds"
 
 
 def read_env(path: pathlib.Path) -> dict[str, str]:
