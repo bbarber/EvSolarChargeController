@@ -110,10 +110,24 @@ func Decide(vehicle *VehicleState, maxAmpsLastHour *float64, solarWindowOpen boo
 		return skip(ActionSkipNoVehicleState, "No telemetry received yet for any managed vehicle.")
 	}
 
-	age := now.Sub(vehicle.LastUpdated)
-	if age > opts.VehicleStateStaleAfter {
+	// Freshness is measured across both channels. Signals transmit on change, so a car that just
+	// answered a wake may send no telemetry at all — its connectivity event is the proof of life.
+	lastHeard := vehicle.LastUpdated
+	if vehicle.OnlineAt != nil && vehicle.OnlineAt.After(lastHeard) {
+		lastHeard = *vehicle.OnlineAt
+	}
+
+	// A car connectivity says is offline is not "unknown" — it is asleep, and its silence is
+	// explained. Charge state cannot change while asleep (unplugging wakes the car, which would
+	// have produced an event), so the stored state remains trustworthy overnight. Without this
+	// bypass, a car plugged in on Thursday night is unreachable all Friday morning: too stale to
+	// consider, and the wake path sits behind a gate staleness never lets it reach.
+	knownAsleep := vehicle.Online != nil && !*vehicle.Online
+
+	age := now.Sub(lastHeard)
+	if age > opts.VehicleStateStaleAfter && !knownAsleep {
 		return skip(ActionSkipNoVehicleState, fmt.Sprintf(
-			"Telemetry for %s is %.1fh old (stale after %.0fh); assuming asleep.",
+			"Nothing heard from %s for %.1fh (stale after %.0fh) and connectivity does not say asleep; not trusting the stored state.",
 			vehicle.VIN, age.Hours(), opts.VehicleStateStaleAfter.Hours()))
 	}
 
@@ -179,9 +193,15 @@ func Decide(vehicle *VehicleState, maxAmpsLastHour *float64, solarWindowOpen boo
 	}
 
 	if !state.IsActivelyCharging() {
-		// Resuming a session this controller stopped for sun is always allowed: we know why it
-		// stopped, and the stop was made to be undone. A cap stop is deliberately not resumable.
+		// Resuming a session this controller stopped for sun is allowed without a connectivity
+		// event — unless connectivity affirmatively says the car is asleep. Commanding a sleeping
+		// car fails, and a failed resume also never reaches the wake gates; reporting
+		// SkipNotCharging instead is what puts waking on the table.
 		if vehicle.Session == SessionStoppedForSun && state.IsPluggedIn() {
+			if knownAsleep {
+				return skip(ActionSkipNotCharging, fmt.Sprintf(
+					"%s would resume at %dA but is asleep; only a wake can reach it.", vehicle.VIN, target))
+			}
 			return Decision{Action: ActionResumeCharging, TargetAmps: intPtr(target), Reason: fmt.Sprintf(
 				"Solar recovered to %.2fA; resuming %s at %dA.", amps, vehicle.VIN, target)}
 		}

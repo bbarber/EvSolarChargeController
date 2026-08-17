@@ -148,16 +148,68 @@ func TestAResumeDoesNotRequireAConnectivityEvent(t *testing.T) {
 	}
 }
 
-func TestNeverStartsOnStaleTelemetry(t *testing.T) {
-	// If the last report is hours old the car is probably asleep, and "plugged in" is a memory
-	// rather than an observation.
+// Stale means nothing heard on EITHER channel. Telemetry transmits on change, so an idle car is
+// silent for hours while remaining perfectly reachable — a recent connectivity event keeps it
+// fresh. But silence on both, without connectivity affirming the car is asleep, is genuine
+// ignorance and nothing may act on it.
+func TestNeverStartsWhenNothingHeardOnEitherChannel(t *testing.T) {
 	v := pluggedIdle()
-	v.LastUpdated = testNow.Add(-9 * time.Hour)
+	old := testNow.Add(-9 * time.Hour)
+	online := true
+	v.LastUpdated = old
+	v.Online, v.OnlineAt = &online, &old // online, but 9h ago, and silent since
 
 	d := Decide(v, amps(12), true, startOptions(true), testNow)
 
 	if d.Action != ActionSkipNoVehicleState {
 		t.Errorf("Action = %v, want SkipNoVehicleState", d.Action)
+	}
+}
+
+// A fresh connectivity event is proof of life even when telemetry is old — an idle car sends no
+// frames because nothing changed, not because it is gone.
+func TestFreshConnectivityRevivesOldTelemetry(t *testing.T) {
+	v := pluggedIdle() // Online five minutes ago
+	v.LastUpdated = testNow.Add(-9 * time.Hour)
+
+	d := Decide(v, amps(12), true, startOptions(true), testNow)
+
+	if d.Action != ActionStartCharging {
+		t.Errorf("Action = %v, want StartCharging — connectivity five minutes ago is fresh", d.Action)
+	}
+}
+
+// A car connectivity says is asleep bypasses staleness entirely: its silence is explained. Hiding
+// it behind SkipNoVehicleState is what made a Thursday-night plug-in unreachable all Friday
+// morning — the wake path hangs off the decision, and staleness preempted the decision.
+func TestAKnownAsleepCarIsNotStale(t *testing.T) {
+	v := pluggedIdle()
+	old := testNow.Add(-13 * time.Hour)
+	offline := false
+	v.LastUpdated = old
+	v.Online, v.OnlineAt = &offline, &old
+
+	d := Decide(v, amps(12), true, startOptions(true), testNow)
+
+	if d.Action != ActionSkipNotCharging {
+		t.Errorf("Action = %v, want SkipNotCharging (the door to the wake gates)", d.Action)
+	}
+}
+
+// The resume path must make the same distinction: a sleeping car cannot be resumed, only woken.
+func TestResumeDefersToWakingWhenTheCarIsAsleep(t *testing.T) {
+	v := pluggedIdle()
+	old := testNow.Add(-13 * time.Hour)
+	offline := false
+	v.LastUpdated = old
+	v.Online, v.OnlineAt = &offline, &old
+	v.Session = SessionStoppedForSun
+	v.SessionSince = &old
+
+	d := Decide(v, amps(12), true, startOptions(true), testNow)
+
+	if d.Action != ActionSkipNotCharging {
+		t.Errorf("Action = %v, want SkipNotCharging — a resume against a sleeping car fails and never wakes", d.Action)
 	}
 }
 

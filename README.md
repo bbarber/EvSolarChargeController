@@ -121,7 +121,8 @@ On each evaluation, the controller:
 2. Takes the maximum of the readings inside the trailing 20 minutes. Readings are never deleted —
    a year of them is about a megabyte, and they are the only real measurement of this array.
 3. Reads the vehicle's last-known state and decides:
-   - no telemetry, or telemetry older than 6 hours → **skip** (the car is probably asleep)
+   - nothing heard on either channel for 6 hours → **skip** (genuinely unknown); a car
+     connectivity says is *asleep* is not unknown — it proceeds to the wake gates
    - manual override active → **skip** until the car unplugs
    - at or above the state-of-charge cap → **stop** once, then leave it alone
    - solar below the connector minimum → **stop** rather than draw the shortfall from the grid
