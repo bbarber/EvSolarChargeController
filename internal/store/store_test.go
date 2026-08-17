@@ -27,19 +27,17 @@ func TestVehicleStateRoundTrips(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	detected := now.Add(-5 * time.Minute)
+	since := now.Add(-5 * time.Minute)
 	setAt := now.Add(-2 * time.Minute)
-	socStop := now.Add(-time.Hour)
 
 	want := &domain.VehicleState{
 		VIN:                 "5YJ3E1EA3KF428848",
 		ChargeAmps:          ptr(12),
 		ReportedMaxAmps:     ptr(16),
 		BatteryLevelPercent: ptr(64),
-		SocStopIssuedAt:     &socStop,
 		ChargingState:       domain.StateCharging,
-		OverrideActive:      true,
-		OverrideDetectedAt:  &detected,
+		Session:             domain.SessionOverridden,
+		SessionSince:        &since,
 		LastSetAmps:         ptr(11),
 		LastSetAt:           &setAt,
 		LastUpdated:         now,
@@ -54,18 +52,14 @@ func TestVehicleStateRoundTrips(t *testing.T) {
 		t.Fatalf("GetVehicleState: %v", err)
 	}
 
-	if got.VIN != want.VIN || got.ChargingState != domain.StateCharging || !got.OverrideActive {
+	if got.VIN != want.VIN || got.ChargingState != domain.StateCharging || got.Session != domain.SessionOverridden {
 		t.Errorf("scalar fields did not round trip: %+v", got)
 	}
 	if *got.ChargeAmps != 12 || *got.ReportedMaxAmps != 16 || *got.BatteryLevelPercent != 64 || *got.LastSetAmps != 11 {
 		t.Errorf("nullable ints did not round trip: %+v", got)
 	}
-	if !got.LastUpdated.Equal(now) || !got.OverrideDetectedAt.Equal(detected) ||
-		!got.LastSetAt.Equal(setAt) || !got.SocStopIssuedAt.Equal(socStop) {
+	if !got.LastUpdated.Equal(now) || !got.SessionSince.Equal(since) || !got.LastSetAt.Equal(setAt) {
 		t.Errorf("timestamps did not round trip: %+v", got)
-	}
-	if got.LowSolarStopIssuedAt != nil {
-		t.Errorf("LowSolarStopIssuedAt = %v, want nil", got.LowSolarStopIssuedAt)
 	}
 }
 

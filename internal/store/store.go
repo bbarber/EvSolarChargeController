@@ -26,11 +26,9 @@ CREATE TABLE IF NOT EXISTS vehicle_state (
     charge_amps              INTEGER,
     reported_max_amps        INTEGER,
     battery_level_percent    INTEGER,
-    soc_stop_issued_at       TEXT,
-    low_solar_stop_issued_at TEXT,
     charging_state           TEXT    NOT NULL,
-    override_active          INTEGER NOT NULL,
-    override_detected_at     TEXT,
+    session                  TEXT    NOT NULL DEFAULT 'Auto',
+    session_since            TEXT,
     last_set_amps            INTEGER,
     last_set_at              TEXT,
     last_updated             TEXT    NOT NULL,
@@ -96,10 +94,35 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE vehicle_state ADD COLUMN online INTEGER`,
 		`ALTER TABLE vehicle_state ADD COLUMN online_at TEXT`,
 		`ALTER TABLE vehicle_state ADD COLUMN last_wake_at TEXT`,
+		`ALTER TABLE vehicle_state ADD COLUMN session TEXT NOT NULL DEFAULT 'Auto'`,
+		`ALTER TABLE vehicle_state ADD COLUMN session_since TEXT`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			db.Close()
 			return nil, fmt.Errorf("migrating: %w", err)
+		}
+	}
+
+	// Databases written before the session state machine carry its meaning in three marker
+	// columns. Fold them into the session once; the markers are left in place but never read
+	// again. Precedence matches the old code: an override outranks either stop.
+	if _, err := db.Exec(`
+        UPDATE vehicle_state SET
+            session = CASE
+                WHEN COALESCE(override_active, 0) != 0        THEN 'Overridden'
+                WHEN soc_stop_issued_at IS NOT NULL           THEN 'StoppedAtCap'
+                WHEN low_solar_stop_issued_at IS NOT NULL     THEN 'StoppedForSun'
+                ELSE session END,
+            session_since = CASE
+                WHEN COALESCE(override_active, 0) != 0        THEN override_detected_at
+                WHEN soc_stop_issued_at IS NOT NULL           THEN soc_stop_issued_at
+                WHEN low_solar_stop_issued_at IS NOT NULL     THEN low_solar_stop_issued_at
+                ELSE session_since END
+        WHERE session = 'Auto' AND session_since IS NULL`); err != nil {
+		// Fresh databases have no marker columns at all; that is not an error.
+		if !strings.Contains(err.Error(), "no such column") {
+			db.Close()
+			return nil, fmt.Errorf("migrating markers to session: %w", err)
 		}
 	}
 
@@ -162,8 +185,8 @@ func intFrom(v sql.NullInt64) *int {
 // ---------------------------------------------------------------------------
 
 const vehicleColumns = `vin, charge_amps, reported_max_amps, battery_level_percent,
-    soc_stop_issued_at, low_solar_stop_issued_at, charging_state, override_active,
-    override_detected_at, last_set_amps, last_set_at, last_updated, online, online_at, last_wake_at`
+    charging_state, session, session_since, last_set_amps, last_set_at, last_updated,
+    online, online_at, last_wake_at`
 
 // GetVehicleState returns nil (with no error) when the VIN has never reported.
 func (s *Store) GetVehicleState(ctx context.Context, vin string) (*domain.VehicleState, error) {
@@ -198,25 +221,23 @@ type scanner interface {
 
 func scanVehicleState(row scanner) (*domain.VehicleState, error) {
 	var (
-		v                domain.VehicleState
-		chargeAmps       sql.NullInt64
-		reportedMax      sql.NullInt64
-		batteryLevel     sql.NullInt64
-		socStop          sql.NullString
-		lowSolarStop     sql.NullString
-		chargingState    string
-		overrideActive   int
-		overrideDetected sql.NullString
-		lastSetAmps      sql.NullInt64
-		lastSetAt        sql.NullString
-		lastUpdated      string
-		online           sql.NullInt64
-		onlineAt         sql.NullString
-		lastWakeAt       sql.NullString
+		v             domain.VehicleState
+		chargeAmps    sql.NullInt64
+		reportedMax   sql.NullInt64
+		batteryLevel  sql.NullInt64
+		chargingState string
+		session       string
+		sessionSince  sql.NullString
+		lastSetAmps   sql.NullInt64
+		lastSetAt     sql.NullString
+		lastUpdated   string
+		online        sql.NullInt64
+		onlineAt      sql.NullString
+		lastWakeAt    sql.NullString
 	)
 
-	if err := row.Scan(&v.VIN, &chargeAmps, &reportedMax, &batteryLevel, &socStop, &lowSolarStop,
-		&chargingState, &overrideActive, &overrideDetected, &lastSetAmps, &lastSetAt, &lastUpdated,
+	if err := row.Scan(&v.VIN, &chargeAmps, &reportedMax, &batteryLevel,
+		&chargingState, &session, &sessionSince, &lastSetAmps, &lastSetAt, &lastUpdated,
 		&online, &onlineAt, &lastWakeAt); err != nil {
 		return nil, err
 	}
@@ -230,17 +251,11 @@ func scanVehicleState(row scanner) (*domain.VehicleState, error) {
 	v.ReportedMaxAmps = intFrom(reportedMax)
 	v.BatteryLevelPercent = intFrom(batteryLevel)
 	v.ChargingState = domain.ParseChargingState(chargingState)
-	v.OverrideActive = overrideActive != 0
+	v.Session = domain.ParseSessionState(session)
 	v.LastSetAmps = intFrom(lastSetAmps)
 
 	var err error
-	if v.SocStopIssuedAt, err = parseTime(socStop); err != nil {
-		return nil, err
-	}
-	if v.LowSolarStopIssuedAt, err = parseTime(lowSolarStop); err != nil {
-		return nil, err
-	}
-	if v.OverrideDetectedAt, err = parseTime(overrideDetected); err != nil {
+	if v.SessionSince, err = parseTime(sessionSince); err != nil {
 		return nil, err
 	}
 	if v.LastSetAt, err = parseTime(lastSetAt); err != nil {
@@ -262,26 +277,24 @@ func scanVehicleState(row scanner) (*domain.VehicleState, error) {
 func (s *Store) SaveVehicleState(ctx context.Context, v *domain.VehicleState) error {
 	_, err := s.db.ExecContext(ctx, `
         INSERT INTO vehicle_state (`+vehicleColumns+`)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(vin) DO UPDATE SET
-            charge_amps              = excluded.charge_amps,
-            reported_max_amps        = excluded.reported_max_amps,
-            battery_level_percent    = excluded.battery_level_percent,
-            soc_stop_issued_at       = excluded.soc_stop_issued_at,
-            low_solar_stop_issued_at = excluded.low_solar_stop_issued_at,
-            charging_state           = excluded.charging_state,
-            override_active          = excluded.override_active,
-            override_detected_at     = excluded.override_detected_at,
-            last_set_amps            = excluded.last_set_amps,
-            last_set_at              = excluded.last_set_at,
-            last_updated             = excluded.last_updated,
-            online                   = excluded.online,
-            online_at                = excluded.online_at,
-            last_wake_at             = excluded.last_wake_at`,
+            charge_amps           = excluded.charge_amps,
+            reported_max_amps     = excluded.reported_max_amps,
+            battery_level_percent = excluded.battery_level_percent,
+            charging_state        = excluded.charging_state,
+            session               = excluded.session,
+            session_since         = excluded.session_since,
+            last_set_amps         = excluded.last_set_amps,
+            last_set_at           = excluded.last_set_at,
+            last_updated          = excluded.last_updated,
+            online                = excluded.online,
+            online_at             = excluded.online_at,
+            last_wake_at          = excluded.last_wake_at`,
 		v.VIN, nullInt(v.ChargeAmps), nullInt(v.ReportedMaxAmps), nullInt(v.BatteryLevelPercent),
-		nullTime(v.SocStopIssuedAt), nullTime(v.LowSolarStopIssuedAt), v.ChargingState.String(),
-		boolToInt(v.OverrideActive), nullTime(v.OverrideDetectedAt), nullInt(v.LastSetAmps),
-		nullTime(v.LastSetAt), formatTime(v.LastUpdated), nullBool(v.Online), nullTime(v.OnlineAt), nullTime(v.LastWakeAt))
+		v.ChargingState.String(), v.Session.String(), nullTime(v.SessionSince),
+		nullInt(v.LastSetAmps), nullTime(v.LastSetAt), formatTime(v.LastUpdated),
+		nullBool(v.Online), nullTime(v.OnlineAt), nullTime(v.LastWakeAt))
 	if err != nil {
 		return fmt.Errorf("saving vehicle state for %s: %w", v.VIN, err)
 	}

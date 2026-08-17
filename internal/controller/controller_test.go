@@ -202,8 +202,8 @@ func TestTheSocCapIsEnforcedOutsideTheWindow(t *testing.T) {
 		t.Fatalf("stops = %d, want 1 — the cap must be enforced at any hour", cmd.stops)
 	}
 	got, _ := st.GetVehicleState(context.Background(), testVIN)
-	if got.SocStopIssuedAt == nil {
-		t.Error("SocStopIssuedAt was not recorded")
+	if got.Session != domain.SessionStoppedAtCap {
+		t.Errorf("Session = %v, want StoppedAtCap", got.Session)
 	}
 }
 
@@ -224,13 +224,10 @@ func TestOvernightChargingIsStoppedEvenBelowTheCap(t *testing.T) {
 		t.Fatalf("stops = %d, want 1 — charging past sunset is grid charging", cmd.stops)
 	}
 
-	// Recorded as a low-solar stop, not a cap stop, so it resumes by itself in the morning.
+	// Recorded as a sun stop, not a cap stop, so it resumes by itself in the morning.
 	got, _ := st.GetVehicleState(context.Background(), testVIN)
-	if got.LowSolarStopIssuedAt == nil {
-		t.Error("LowSolarStopIssuedAt not recorded; the session would never auto-resume")
-	}
-	if got.SocStopIssuedAt != nil {
-		t.Error("SocStopIssuedAt was set for a sunset stop — that would block the morning resume")
+	if got.Session != domain.SessionStoppedForSun {
+		t.Errorf("Session = %v, want StoppedForSun — StoppedAtCap would block the morning resume", got.Session)
 	}
 }
 
@@ -458,11 +455,8 @@ func TestLowSolarStopsAndRecordsItsOwnMarker(t *testing.T) {
 	}
 
 	got, _ := st.GetVehicleState(context.Background(), testVIN)
-	if got.LowSolarStopIssuedAt == nil {
-		t.Error("LowSolarStopIssuedAt was not recorded — the resume path depends on it")
-	}
-	if got.SocStopIssuedAt != nil {
-		t.Error("SocStopIssuedAt was set for a low-solar stop; the two must not be confused")
+	if got.Session != domain.SessionStoppedForSun {
+		t.Errorf("Session = %v, want StoppedForSun — the resume path depends on it", got.Session)
 	}
 }
 
@@ -486,11 +480,8 @@ func TestSocCapStopsAndRecordsTheSocMarker(t *testing.T) {
 		t.Fatalf("stops = %d, want 1", cmd.stops)
 	}
 	got, _ := st.GetVehicleState(context.Background(), testVIN)
-	if got.SocStopIssuedAt == nil {
-		t.Error("SocStopIssuedAt was not recorded")
-	}
-	if got.LowSolarStopIssuedAt != nil {
-		t.Error("LowSolarStopIssuedAt was set for a SoC stop — that would make it auto-resume")
+	if got.Session != domain.SessionStoppedAtCap {
+		t.Errorf("Session = %v, want StoppedAtCap — StoppedForSun would auto-resume past the cap", got.Session)
 	}
 }
 
@@ -505,7 +496,8 @@ func TestResumeClearsTheLowSolarMarker(t *testing.T) {
 	v := domain.NewVehicleState(testVIN, testNow)
 	v.ChargingState = domain.StateStopped
 	v.BatteryLevelPercent = intPtr(50)
-	v.LowSolarStopIssuedAt = &stopped
+	v.Session = domain.SessionStoppedForSun
+	v.SessionSince = &stopped
 	if err := st.SaveVehicleState(context.Background(), v); err != nil {
 		t.Fatalf("SaveVehicleState: %v", err)
 	}
@@ -518,8 +510,8 @@ func TestResumeClearsTheLowSolarMarker(t *testing.T) {
 		t.Fatalf("starts = %v, want [11]", cmd.starts)
 	}
 	got, _ := st.GetVehicleState(context.Background(), testVIN)
-	if got.LowSolarStopIssuedAt != nil {
-		t.Error("LowSolarStopIssuedAt survived the resume; the next frame would look like a manual restart")
+	if got.Session != domain.SessionAuto {
+		t.Errorf("Session = %v, want Auto — StoppedByUs with a charging car reads as a manual restart", got.Session)
 	}
 }
 
@@ -604,8 +596,8 @@ func TestTelemetryFlagsAManualOverride(t *testing.T) {
 	}
 
 	got, _ := st.GetVehicleState(context.Background(), testVIN)
-	if !got.OverrideActive {
-		t.Error("expected a manual override to be flagged")
+	if got.Session != domain.SessionOverridden {
+		t.Errorf("Session = %v, want Overridden", got.Session)
 	}
 }
 
@@ -630,7 +622,7 @@ func TestOverriddenVehicleIsLeftAloneByTheLoop(t *testing.T) {
 	v := domain.NewVehicleState(testVIN, testNow)
 	v.ChargingState = domain.StateCharging
 	v.BatteryLevelPercent = intPtr(50)
-	v.OverrideActive = true
+	v.Session = domain.SessionOverridden
 	if err := st.SaveVehicleState(context.Background(), v); err != nil {
 		t.Fatalf("SaveVehicleState: %v", err)
 	}

@@ -33,7 +33,7 @@ func socVehicle(soc *int, opts ...vehOpt) *VehicleState {
 }
 
 func vehSocStop(at time.Time) vehOpt {
-	return func(v *VehicleState) { v.SocStopIssuedAt = &at }
+	return func(v *VehicleState) { v.Session = SessionStoppedAtCap; v.SessionSince = &at }
 }
 
 func TestStopsChargingAtOrAboveTheCap(t *testing.T) {
@@ -112,7 +112,7 @@ func TestRestartingAfterOurStopIsTreatedAsAManualOverride(t *testing.T) {
 	got := ApplyObservation(s, Observation{VIN: testVIN, ObservedAt: testNow,
 		ChargingState: func() *ChargingState { c := StateCharging; return &c }()}, socOptions())
 
-	if !got.OverrideActive {
+	if got.Session != SessionOverridden {
 		t.Error("expected a manual restart to be flagged as an override")
 	}
 }
@@ -124,7 +124,7 @@ func TestTelemetryArrivingJustAfterOurStopIsNotAnOverride(t *testing.T) {
 	got := ApplyObservation(s, Observation{VIN: testVIN, ObservedAt: testNow,
 		ChargingState: func() *ChargingState { c := StateCharging; return &c }()}, socOptions())
 
-	if got.OverrideActive {
+	if got.Session == SessionOverridden {
 		t.Error("expected in-flight telemetry not to trip the override")
 	}
 }
@@ -135,11 +135,8 @@ func TestUnpluggingClearsTheStopMarker(t *testing.T) {
 	got := ApplyObservation(s, Observation{VIN: testVIN, ObservedAt: testNow,
 		ChargingState: func() *ChargingState { c := StateDisconnected; return &c }()}, socOptions())
 
-	if got.SocStopIssuedAt != nil {
-		t.Error("expected the stop marker to be cleared on unplug")
-	}
-	if got.OverrideActive {
-		t.Error("expected no override after unplug")
+	if got.Session != SessionAuto {
+		t.Errorf("Session = %v, want Auto after unplug", got.Session)
 	}
 }
 

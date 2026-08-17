@@ -53,6 +53,10 @@ type Controller struct {
 	opts     domain.ChargingOptions
 	log      *slog.Logger
 
+	// now is the clock, replaceable in tests. Event-driven paths need a time and must not
+	// invent one per call site.
+	now func() time.Time
+
 	// One mutex over both paths. Telemetry and the control loop both read-modify-write the same
 	// vehicle record, and without this a frame arriving mid-evaluation could overwrite the
 	// LastSetAmps we just recorded — which would then look like a manual override.
@@ -61,7 +65,8 @@ type Controller struct {
 
 func New(store Store, solar SolarReader, commands Commander, window *domain.PollingWindow,
 	opts domain.ChargingOptions, log *slog.Logger) *Controller {
-	return &Controller{store: store, solar: solar, commands: commands, window: window, opts: opts, log: log}
+	return &Controller{store: store, solar: solar, commands: commands, window: window, opts: opts, log: log,
+		now: func() time.Time { return time.Now().UTC() }}
 }
 
 // SetChargingOptions replaces the charging options. Used by tests to exercise a mode without
@@ -91,16 +96,15 @@ func (c *Controller) HandleRecord(ctx context.Context, topic string, raw []byte)
 // that question: a connected but parked car sends no data, so data age cannot distinguish idle
 // from asleep.
 func (c *Controller) handleConnectivity(ctx context.Context, raw []byte) error {
-	conn, err := telemetry.DecodeConnectivity(raw, time.Now().UTC())
+	conn, err := telemetry.DecodeConnectivity(raw, c.now())
 	if err != nil {
 		return err
 	}
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	state, err := c.store.GetVehicleState(ctx, conn.VIN)
 	if err != nil {
+		c.mu.Unlock()
 		return err
 	}
 	if state == nil {
@@ -114,36 +118,59 @@ func (c *Controller) handleConnectivity(ctx context.Context, raw []byte) error {
 	c.log.Info("vehicle connectivity changed",
 		"vin", conn.VIN, "online", conn.Online, "network", conn.Network, "at", conn.ObservedAt)
 
-	return c.store.SaveVehicleState(ctx, state)
+	if err := c.store.SaveVehicleState(ctx, state); err != nil {
+		c.mu.Unlock()
+		return err
+	}
+	c.mu.Unlock()
+
+	// Evaluate on the event, not the next tick. This is the moment that matters most: a car that
+	// just came online after our wake is awake NOW, and twenty minutes from now it will not be.
+	// Today's first wake was wasted exactly this way.
+	if err := c.evaluate(ctx, c.now()); err != nil {
+		c.log.Error("evaluation after connectivity event failed", "error", err)
+	}
+	return nil
 }
 
 // HandleTelemetry decodes one vehicle-data record and folds it into the vehicle's state.
 func (c *Controller) HandleTelemetry(ctx context.Context, raw []byte) error {
-	obs, err := telemetry.DecodeBytes(raw, time.Now().UTC())
+	obs, err := telemetry.DecodeBytes(raw, c.now())
 	if err != nil {
 		return err
 	}
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	state, err := c.store.GetVehicleState(ctx, obs.VIN)
 	if err != nil {
+		c.mu.Unlock()
 		return err
 	}
 	if state == nil {
 		state = domain.NewVehicleState(obs.VIN, obs.ObservedAt)
 	}
 
-	before := state.OverrideActive
+	before := state.Session
 	state = domain.ApplyObservation(state, obs, c.opts)
 
-	if state.OverrideActive && !before {
+	if state.Session == domain.SessionOverridden && before != domain.SessionOverridden {
 		c.log.Warn("manual override detected; automatic adjustment stops until the car unplugs",
 			"vin", obs.VIN, "reported_amps", deref(obs.ReportedAmps), "last_set", deref(state.LastSetAmps))
 	}
 
-	return c.store.SaveVehicleState(ctx, state)
+	if err := c.store.SaveVehicleState(ctx, state); err != nil {
+		c.mu.Unlock()
+		return err
+	}
+	c.mu.Unlock()
+
+	// Evaluate on the event. A plug-in acts within seconds instead of waiting out the tick, and a
+	// frame that tripped the override stops us commanding on stale intent. Decisions are free —
+	// only the Enphase poll costs anything, and that stays on the clock.
+	if err := c.evaluate(ctx, c.now()); err != nil {
+		c.log.Error("evaluation after telemetry event failed", "error", err)
+	}
+	return nil
 }
 
 // Run evaluates on every tick until ctx is cancelled.
@@ -167,9 +194,11 @@ func (c *Controller) Run(ctx context.Context) error {
 	}
 }
 
-// Evaluate runs one cycle: poll solar, decide, act.
+// Evaluate is one scheduled cycle: poll solar if the window is open, then decide and act.
 //
-// Exported so it can be driven directly in tests without waiting on a ticker.
+// The clock exists for the poll. Deciding also happens here so a quiet system still reconsiders
+// every twenty minutes, but events do not wait for it — telemetry and connectivity evaluate the
+// moment they arrive.
 func (c *Controller) Evaluate(ctx context.Context, now time.Time) error {
 	// Only the *poll* is window-bound. The decision runs around the clock.
 	//
@@ -211,6 +240,11 @@ func (c *Controller) Evaluate(ctx context.Context, now time.Time) error {
 	// simulations still run on an invented 4.2 kW peak. Pruning bought nothing and, when its
 	// horizon was shared with the wake gate, silently broke it.
 
+	return c.evaluate(ctx, now)
+}
+
+// evaluate decides and acts on current stored state. Shared by the tick and by every event.
+func (c *Controller) evaluate(ctx context.Context, now time.Time) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -301,9 +335,10 @@ func (c *Controller) act(ctx context.Context, vehicle *domain.VehicleState, d do
 		}
 		vehicle.LastSetAmps = d.TargetAmps
 		vehicle.LastSetAt = &now
-		// Any earlier stop is now history; leaving the marker set would make the next telemetry
-		// frame look like a person restarting the session.
-		vehicle.LowSolarStopIssuedAt = nil
+		// Any earlier stop is history: a StoppedByUs session with a charging car reads as a
+		// person restarting it, and this charging is our own doing.
+		vehicle.Session = domain.SessionAuto
+		vehicle.SessionSince = nil
 
 	case d.ShouldResume(), d.ShouldStart():
 		if err := c.commands.StartCharging(ctx, vehicle.VIN, *d.TargetAmps); err != nil {
@@ -311,19 +346,21 @@ func (c *Controller) act(ctx context.Context, vehicle *domain.VehicleState, d do
 		}
 		vehicle.LastSetAmps = d.TargetAmps
 		vehicle.LastSetAt = &now
-		// Cleared before the car can report Charging again, so our own resume is never mistaken
-		// for a manual restart.
-		vehicle.LowSolarStopIssuedAt = nil
+		// Back to Auto before the car can report Charging again, so our own resume is never
+		// mistaken for a manual restart.
+		vehicle.Session = domain.SessionAuto
+		vehicle.SessionSince = nil
 
 	case d.ShouldStop():
 		if err := c.commands.StopCharging(ctx, vehicle.VIN); err != nil {
 			return err
 		}
 		if d.Action == domain.ActionStopCharging {
-			vehicle.SocStopIssuedAt = &now
+			vehicle.Session = domain.SessionStoppedAtCap
 		} else {
-			vehicle.LowSolarStopIssuedAt = &now
+			vehicle.Session = domain.SessionStoppedForSun
 		}
+		vehicle.SessionSince = &now
 		vehicle.LastSetAmps = nil
 
 	default:

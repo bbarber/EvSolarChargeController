@@ -117,13 +117,13 @@ func Decide(vehicle *VehicleState, maxAmpsLastHour *float64, solarWindowOpen boo
 			vehicle.VIN, age.Hours(), opts.VehicleStateStaleAfter.Hours()))
 	}
 
-	if vehicle.OverrideActive {
-		detected := "unknown"
-		if vehicle.OverrideDetectedAt != nil {
-			detected = vehicle.OverrideDetectedAt.Format(time.RFC3339Nano)
+	if vehicle.Session == SessionOverridden {
+		since := "unknown"
+		if vehicle.SessionSince != nil {
+			since = vehicle.SessionSince.Format(time.RFC3339Nano)
 		}
 		return skip(ActionSkipOverrideActive, fmt.Sprintf(
-			"Manual override active for %s since %s; waiting for unplug.", vehicle.VIN, detected))
+			"Manual override active for %s since %s; waiting for unplug.", vehicle.VIN, since))
 	}
 
 	state := vehicle.ChargingState
@@ -179,8 +179,9 @@ func Decide(vehicle *VehicleState, maxAmpsLastHour *float64, solarWindowOpen boo
 	}
 
 	if !state.IsActivelyCharging() {
-		// Resuming a session this controller stopped is always allowed: we know why it stopped.
-		if vehicle.LowSolarStopIssuedAt != nil && state.IsPluggedIn() {
+		// Resuming a session this controller stopped for sun is always allowed: we know why it
+		// stopped, and the stop was made to be undone. A cap stop is deliberately not resumable.
+		if vehicle.Session == SessionStoppedForSun && state.IsPluggedIn() {
 			return Decision{Action: ActionResumeCharging, TargetAmps: intPtr(target), Reason: fmt.Sprintf(
 				"Solar recovered to %.2fA; resuming %s at %dA.", amps, vehicle.VIN, target)}
 		}

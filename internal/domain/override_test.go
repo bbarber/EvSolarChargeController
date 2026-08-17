@@ -18,7 +18,7 @@ type stateOpt func(*VehicleState)
 func withLastSet(amps int, at *time.Time) stateOpt {
 	return func(s *VehicleState) { s.LastSetAmps = intPtr(amps); s.LastSetAt = at }
 }
-func withOverrideActive() stateOpt       { return func(s *VehicleState) { s.OverrideActive = true } }
+func withOverrideActive() stateOpt       { return func(s *VehicleState) { s.Session = SessionOverridden } }
 func withState(c ChargingState) stateOpt { return func(s *VehicleState) { s.ChargingState = c } }
 
 func newState(opts ...stateOpt) *VehicleState {
@@ -58,11 +58,11 @@ func TestFlagsAnOverrideWhenReportedAmpsContradictWhatWeSet(t *testing.T) {
 
 	got := ApplyObservation(s, newObs(obsAmps(32), obsState(StateCharging)), overrideOptions())
 
-	if !got.OverrideActive {
-		t.Error("expected override to be flagged")
+	if got.Session != SessionOverridden {
+		t.Errorf("Session = %v, want Overridden", got.Session)
 	}
-	if got.OverrideDetectedAt == nil || !got.OverrideDetectedAt.Equal(testNow) {
-		t.Errorf("OverrideDetectedAt = %v, want %v", got.OverrideDetectedAt, testNow)
+	if got.SessionSince == nil || !got.SessionSince.Equal(testNow) {
+		t.Errorf("SessionSince = %v, want %v", got.SessionSince, testNow)
 	}
 	if got.ChargeAmps == nil || *got.ChargeAmps != 32 {
 		t.Errorf("ChargeAmps = %v, want 32", got.ChargeAmps)
@@ -71,7 +71,7 @@ func TestFlagsAnOverrideWhenReportedAmpsContradictWhatWeSet(t *testing.T) {
 
 func TestDoesNotFlagWhenTheCarConfirmsOurValue(t *testing.T) {
 	s := newState(withLastSet(12, ago(30*time.Minute)))
-	if ApplyObservation(s, newObs(obsAmps(12), obsState(StateCharging)), overrideOptions()).OverrideActive {
+	if ApplyObservation(s, newObs(obsAmps(12), obsState(StateCharging)), overrideOptions()).Session == SessionOverridden {
 		t.Error("expected no override when the car confirms our value")
 	}
 }
@@ -79,21 +79,21 @@ func TestDoesNotFlagWhenTheCarConfirmsOurValue(t *testing.T) {
 func TestDoesNotFlagInsideTheSettleWindow(t *testing.T) {
 	// Telemetry emitted before our command landed still carries the previous value.
 	s := newState(withLastSet(12, ago(30*time.Second)))
-	if ApplyObservation(s, newObs(obsAmps(8), obsState(StateCharging)), overrideOptions()).OverrideActive {
+	if ApplyObservation(s, newObs(obsAmps(8), obsState(StateCharging)), overrideOptions()).Session == SessionOverridden {
 		t.Error("expected no override inside the settle window")
 	}
 }
 
 func TestDoesNotFlagBeforeWeHaveEverSetAValue(t *testing.T) {
 	s := newState()
-	if ApplyObservation(s, newObs(obsAmps(24), obsState(StateCharging)), overrideOptions()).OverrideActive {
+	if ApplyObservation(s, newObs(obsAmps(24), obsState(StateCharging)), overrideOptions()).Session == SessionOverridden {
 		t.Error("expected no override when we have never set a value")
 	}
 }
 
 func TestDoesNotFlagWhenTheVehicleIsNotCharging(t *testing.T) {
 	s := newState(withLastSet(12, ago(30*time.Minute)))
-	if ApplyObservation(s, newObs(obsAmps(8), obsState(StateStopped)), overrideOptions()).OverrideActive {
+	if ApplyObservation(s, newObs(obsAmps(8), obsState(StateStopped)), overrideOptions()).Session == SessionOverridden {
 		t.Error("expected no override when the vehicle is not charging")
 	}
 }
@@ -103,14 +103,14 @@ func TestUnpluggingClearsTheOverrideAndForgetsTheLastSetValue(t *testing.T) {
 
 	got := ApplyObservation(s, newObs(obsState(StateDisconnected)), overrideOptions())
 
-	if got.OverrideActive || got.OverrideDetectedAt != nil || got.LastSetAmps != nil || got.LastSetAt != nil {
+	if got.Session != SessionAuto || got.SessionSince != nil || got.LastSetAmps != nil || got.LastSetAt != nil {
 		t.Errorf("expected a full reset on unplug, got %+v", got)
 	}
 }
 
 func TestADisengagedLatchAlsoClearsTheOverride(t *testing.T) {
 	s := newState(withLastSet(12, nil), withOverrideActive(), withState(StateStopped))
-	if ApplyObservation(s, newObs(obsLatchDisengaged()), overrideOptions()).OverrideActive {
+	if ApplyObservation(s, newObs(obsLatchDisengaged()), overrideOptions()).Session == SessionOverridden {
 		t.Error("expected a disengaged latch to clear the override")
 	}
 }
@@ -118,7 +118,7 @@ func TestADisengagedLatchAlsoClearsTheOverride(t *testing.T) {
 func TestAnOverrideSurvivesAPauseInCharging(t *testing.T) {
 	// Charging stopping is not unplugging — the user's setting should still be respected.
 	s := newState(withLastSet(12, nil), withOverrideActive())
-	if !ApplyObservation(s, newObs(obsState(StateStopped)), overrideOptions()).OverrideActive {
+	if ApplyObservation(s, newObs(obsState(StateStopped)), overrideOptions()).Session != SessionOverridden {
 		t.Error("expected the override to survive a pause")
 	}
 }
@@ -126,15 +126,15 @@ func TestAnOverrideSurvivesAPauseInCharging(t *testing.T) {
 func TestAnOverrideIsNotReEvaluatedWhileAlreadyActive(t *testing.T) {
 	s := newState(withLastSet(12, ago(time.Hour)), withOverrideActive())
 	detected := testNow.Add(-20 * time.Minute)
-	s.OverrideDetectedAt = &detected
+	s.SessionSince = &detected
 
 	got := ApplyObservation(s, newObs(obsAmps(20), obsState(StateCharging)), overrideOptions())
 
-	if !got.OverrideActive {
+	if got.Session != SessionOverridden {
 		t.Error("expected the override to remain active")
 	}
-	if !got.OverrideDetectedAt.Equal(detected) {
-		t.Errorf("OverrideDetectedAt moved to %v, want %v", got.OverrideDetectedAt, detected)
+	if !got.SessionSince.Equal(detected) {
+		t.Errorf("SessionSince moved to %v, want %v", got.SessionSince, detected)
 	}
 }
 
@@ -183,19 +183,19 @@ func TestAFullSessionRunsOverrideThenReset(t *testing.T) {
 
 	// A person bumps amps in the app.
 	s = ApplyObservation(s, newObs(obsAmps(32), obsState(StateCharging)), opts)
-	if !s.OverrideActive {
+	if s.Session != SessionOverridden {
 		t.Fatal("expected the override to be flagged")
 	}
 
 	// Charging completes — the override must survive, since the cable is still in.
 	s = ApplyObservation(s, newObs(obsState(StateComplete), obsAt(testNow.Add(time.Hour))), opts)
-	if !s.OverrideActive {
+	if s.Session != SessionOverridden {
 		t.Fatal("expected the override to survive completion")
 	}
 
 	// Cable comes out — back under automatic control.
 	s = ApplyObservation(s, newObs(obsState(StateDisconnected), obsAt(testNow.Add(2*time.Hour))), opts)
-	if s.OverrideActive || s.LastSetAmps != nil {
+	if s.Session != SessionAuto || s.LastSetAmps != nil {
 		t.Errorf("expected a reset on unplug, got %+v", s)
 	}
 }
