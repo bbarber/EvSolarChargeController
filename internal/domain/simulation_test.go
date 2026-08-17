@@ -307,22 +307,25 @@ func applyDecision(v *VehicleState, d Decision, now time.Time, r *dayResult) {
 	case d.ShouldSend():
 		v.LastSetAmps = d.TargetAmps
 		v.LastSetAt = &now
-		v.LowSolarStopIssuedAt = nil
+		v.Session = SessionAuto
+		v.SessionSince = nil
 		r.Commands++
-	case d.ShouldResume():
+	case d.ShouldResume(), d.ShouldStart():
 		v.ChargingState = StateCharging
 		v.LastSetAmps = d.TargetAmps
 		v.LastSetAt = &now
-		v.LowSolarStopIssuedAt = nil
+		v.Session = SessionAuto
+		v.SessionSince = nil
 		r.Commands++
 	case d.ShouldStop():
 		v.ChargingState = StateStopped
 		v.LastSetAmps = nil
 		if d.Action == ActionStopCharging {
-			v.SocStopIssuedAt = &now
+			v.Session = SessionStoppedAtCap
 		} else {
-			v.LowSolarStopIssuedAt = &now
+			v.Session = SessionStoppedForSun
 		}
+		v.SessionSince = &now
 		r.Commands++
 	}
 }

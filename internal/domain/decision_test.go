@@ -19,7 +19,7 @@ func decisionOptions() ChargingOptions {
 type vehOpt func(*VehicleState)
 
 func vehState(c ChargingState) vehOpt { return func(v *VehicleState) { v.ChargingState = c } }
-func vehOverride() vehOpt             { return func(v *VehicleState) { v.OverrideActive = true } }
+func vehOverride() vehOpt             { return func(v *VehicleState) { v.Session = SessionOverridden } }
 func vehLastSet(a int) vehOpt         { return func(v *VehicleState) { v.LastSetAmps = intPtr(a) } }
 func vehReportedMax(a int) vehOpt     { return func(v *VehicleState) { v.ReportedMaxAmps = intPtr(a) } }
 func vehUpdated(t time.Time) vehOpt   { return func(v *VehicleState) { v.LastUpdated = t } }

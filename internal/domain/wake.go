@@ -73,7 +73,7 @@ func DecideWake(vehicle *VehicleState, in WakeInputs, opts ChargingOptions) Wake
 		return noWake("%s is already online.", vehicle.VIN)
 	}
 
-	if vehicle.OverrideActive {
+	if vehicle.Session == SessionOverridden {
 		return noWake("Manual override active for %s.", vehicle.VIN)
 	}
 

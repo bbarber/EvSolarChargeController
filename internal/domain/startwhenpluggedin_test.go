@@ -138,7 +138,8 @@ func TestAResumeDoesNotRequireAConnectivityEvent(t *testing.T) {
 	v := pluggedIdle()
 	v.Online = nil
 	stopped := testNow.Add(-time.Hour)
-	v.LowSolarStopIssuedAt = &stopped
+	v.Session = SessionStoppedForSun
+	v.SessionSince = &stopped
 
 	d := Decide(v, amps(12), true, startOptions(true), testNow)
 
@@ -165,7 +166,8 @@ func TestAResumeStillWinsOverAStart(t *testing.T) {
 	// so the log distinguishes "picking up where we left off" from "starting something new".
 	v := pluggedIdle()
 	stopped := testNow.Add(-time.Hour)
-	v.LowSolarStopIssuedAt = &stopped
+	v.Session = SessionStoppedForSun
+	v.SessionSince = &stopped
 
 	d := Decide(v, amps(12), true, startOptions(true), testNow)
 

@@ -73,11 +73,13 @@ sequenceDiagram
     Car->>FT: mTLS WebSocket, protobuf on change
     FT->>Ctl: ZeroMQ, topic evsolar_V
     Ctl->>DB: fold into vehicle state
+    Note right of Ctl: every event evaluates immediately
     Car->>FT: connect / disconnect
     FT->>Ctl: ZeroMQ, topic evsolar_connectivity
     Ctl->>DB: online / offline
+    Note right of Ctl: a car that answers a wake is commanded now, while awake
 
-    loop every 20 minutes, around the clock
+    loop tick every 20 minutes — the clock exists for the poll
         opt inside the 09:00-18:00 solar window
             Ctl->>Enp: GET system summary
             Enp-->>Ctl: watts
@@ -107,10 +109,15 @@ sequenceDiagram
 
 ### The control loop
 
-Every 20 minutes inside the daylight window, the controller:
+Decisions happen on events; the clock exists for the Enphase poll. Every telemetry frame and every
+connectivity change evaluates immediately — a car that comes online after a wake is commanded while
+it is provably awake, not up to twenty minutes later when it has gone back to sleep. A tick still
+evaluates too, so a quiet system reconsiders every 20 minutes.
 
-1. Polls Enphase for current production, converts watts to amps at the configured service voltage,
-   and stores the reading.
+On each evaluation, the controller:
+
+1. On ticks inside the daylight window only: polls Enphase for current production, converts watts
+   to amps at the configured service voltage, and stores the reading.
 2. Takes the maximum of the readings inside the trailing 20 minutes. Readings are never deleted —
    a year of them is about a megabyte, and they are the only real measurement of this array.
 3. Reads the vehicle's last-known state and decides:
@@ -126,6 +133,29 @@ Every 20 minutes inside the daylight window, the controller:
 4. Records what it set, so the next telemetry frame can be compared against it.
 
 Every decision is logged with its reason.
+
+### The session state machine
+
+The controller's relationship to the charge session is one explicit state, not a set of flags:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Auto
+    Auto --> StoppedForSun: sun cannot sustain the minimum, or sunset
+    StoppedForSun --> Auto: sun recovers — resumes by itself
+    Auto --> StoppedAtCap: state-of-charge cap reached
+    Auto --> Overridden: reported amps contradict what we set
+    StoppedForSun --> Overridden: a person restarts the session
+    StoppedAtCap --> Overridden: a person restarts the session
+    Overridden --> Auto: unplug
+    StoppedForSun --> Auto: unplug
+    StoppedAtCap --> Auto: unplug
+```
+
+`Auto` is normal control. The two stop states record *why we stopped*, which is what decides
+whether the session resumes by itself: a sun stop does, a cap stop does not. `Overridden` means a
+person took over, and only unplugging hands control back. Every transition is made in exactly one
+place and carries a timestamp, which the settle window is measured against.
 
 ### Override detection
 

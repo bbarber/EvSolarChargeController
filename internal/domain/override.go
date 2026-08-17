@@ -50,16 +50,14 @@ func ApplyObservation(state *VehicleState, obs Observation, opts ChargingOptions
 	case unplugged:
 		// Unplugging is the reset point for the whole state machine. What we last set is
 		// forgotten too, since the next session starts from whatever the car defaults to.
-		state.OverrideActive = false
-		state.OverrideDetectedAt = nil
+		state.Session = SessionAuto
+		state.SessionSince = nil
 		state.LastSetAmps = nil
 		state.LastSetAt = nil
-		state.SocStopIssuedAt = nil
-		state.LowSolarStopIssuedAt = nil
 
 	case shouldFlagOverride(state, obs, opts, effective):
-		state.OverrideActive = true
-		state.OverrideDetectedAt = timePtr(obs.ObservedAt)
+		state.Session = SessionOverridden
+		state.SessionSince = timePtr(obs.ObservedAt)
 	}
 
 	state.LastUpdated = obs.ObservedAt
@@ -67,19 +65,17 @@ func ApplyObservation(state *VehicleState, obs Observation, opts ChargingOptions
 }
 
 func shouldFlagOverride(state *VehicleState, obs Observation, opts ChargingOptions, effective ChargingState) bool {
-	if state.OverrideActive {
+	if state.Session == SessionOverridden {
 		return false // Already flagged; nothing to re-evaluate until unplug.
 	}
 
-	// We stopped the session and the car is charging again while our marker is still set. A resume
-	// by this controller clears the marker first, so reaching here means a person restarted it —
-	// hand back control rather than stopping them again every cycle.
-	stopMarker := state.SocStopIssuedAt
-	if stopMarker == nil {
-		stopMarker = state.LowSolarStopIssuedAt
-	}
-	if stopMarker != nil && effective.IsActivelyCharging() &&
-		obs.ObservedAt.Sub(*stopMarker) >= opts.OverrideSettleWindow {
+	// We stopped the session and the car is charging again. A resume by this controller moves the
+	// session to Auto first, so a StoppedByUs state with a charging car means a person restarted
+	// it — hand back control rather than stopping them again every cycle. The settle window
+	// tolerates frames that were in flight when our stop landed.
+	if state.Session.StoppedByUs() && effective.IsActivelyCharging() &&
+		state.SessionSince != nil &&
+		obs.ObservedAt.Sub(*state.SessionSince) >= opts.OverrideSettleWindow {
 		return true
 	}
 

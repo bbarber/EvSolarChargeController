@@ -89,7 +89,7 @@ func simulatePlugIn(t *testing.T, sc plugInScenario, w weather, opts ChargingOpt
 				ReportedAmps:    intPtr(sc.carDefaultAmps),
 				LatchDisengaged: &latch,
 			}, opts)
-			if vehicle.OverrideActive {
+			if vehicle.Session == SessionOverridden {
 				t.Errorf("%s: plugging in was misread as a manual override", sc.name)
 			}
 			vehicle.LastSetAmps = nil // nothing commanded yet

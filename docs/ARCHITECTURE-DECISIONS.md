@@ -140,6 +140,27 @@ The shared-secret HTTP hop between the bridge and the ingest function disappeare
 
 ---
 
+## 5. The clock was doing the events' job
+
+**The original shape:** one timer, every 20 minutes, doing everything — polling solar, reading
+state, deciding, commanding. Telemetry only wrote to the database and waited to be noticed.
+
+**What that cost, all observed live on the same day:** a car plugged in at noon waited out the
+tick; a car that answered our first-ever wake went back to sleep in the gap before the next tick,
+wasting the wake and arming the cooldown; a manual override sat unnoticed until the clock came
+round. The inputs are events; only the decisions were on a clock, and the only reason for the
+clock is the Enphase call budget.
+
+**What was built instead:** decisions run on every telemetry frame and every connectivity change,
+the moment they arrive. The tick remains for the poll — the one thing that costs money — and as a
+periodic re-evaluation for quiet systems. Command churn is prevented by the same already-at-target
+guard that always existed, and evaluations are free: they read the local database.
+
+At the same time the three nullable state markers (override active, stopped-at-cap, stopped-for-
+sun) became one explicit session state with named transitions and a timestamp. The markers'
+pairwise interactions had caused every subtle behavioural bug to date; the state machine makes the
+precedence inspectable and gives the settle window a single time to measure against.
+
 ## Resolved from the spec's open-questions list
 
 **Telemetry field names — resolved.** The proto defines both `ChargeState` (field 2) and

@@ -23,7 +23,7 @@ func lowSolarVehicle(opts ...vehOpt) *VehicleState {
 }
 
 func vehLowSolarStop(at time.Time) vehOpt {
-	return func(v *VehicleState) { v.LowSolarStopIssuedAt = &at }
+	return func(v *VehicleState) { v.Session = SessionStoppedForSun; v.SessionSince = &at }
 }
 
 func vehSoc(p int) vehOpt { return func(v *VehicleState) { v.BatteryLevelPercent = intPtr(p) } }
@@ -114,7 +114,7 @@ func TestRestartingByHandAfterALowSolarStopIsAnOverride(t *testing.T) {
 	got := ApplyObservation(s, Observation{VIN: testVIN, ObservedAt: testNow,
 		ChargingState: func() *ChargingState { c := StateCharging; return &c }()}, socOptions())
 
-	if !got.OverrideActive {
+	if got.Session != SessionOverridden {
 		t.Error("expected a manual restart to be flagged as an override")
 	}
 }
@@ -125,8 +125,8 @@ func TestUnpluggingClearsTheLowSolarMarker(t *testing.T) {
 	got := ApplyObservation(s, Observation{VIN: testVIN, ObservedAt: testNow,
 		ChargingState: func() *ChargingState { c := StateDisconnected; return &c }()}, socOptions())
 
-	if got.LowSolarStopIssuedAt != nil {
-		t.Error("expected the low-solar marker to be cleared on unplug")
+	if got.Session != SessionAuto {
+		t.Errorf("Session = %v, want Auto after unplug", got.Session)
 	}
 }
 

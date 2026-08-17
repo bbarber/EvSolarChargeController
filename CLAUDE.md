@@ -221,6 +221,15 @@ harmless, a retry storm is not.
 
 ## Invariants — do not break these without a decision
 
+- **Decisions ride on events; the clock exists for the Enphase poll.** Telemetry and connectivity
+  evaluate on arrival. The first wake this system ever sent was wasted because the car slept again
+  inside the tick interval — do not reintroduce a wait.
+- **Session state is one enum with named transitions** (`Auto`, `StoppedForSun`, `StoppedAtCap`,
+  `Overridden`), stored with the time it was entered. It replaced three nullable markers whose
+  interactions caused every subtle bug in the project's history. Transitions happen in exactly two
+  places: `domain.ApplyObservation` (unplug, override detection) and `controller.act` (our own
+  commands). Do not add a third.
+
 - **Never poll the vehicle.** All vehicle state arrives by push.
 - **Only charge on solar.** With the sun down, a running session is stopped. Stopping short of the
   state-of-charge cap is the correct outcome, not a shortfall.

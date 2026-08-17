@@ -79,18 +79,13 @@ type VehicleState struct {
 
 	BatteryLevelPercent *int
 
-	// SocStopIssuedAt records when this controller last stopped charging because the state-of-
-	// charge cap was reached. If the car is charging again well after this, someone restarted it.
-	SocStopIssuedAt *time.Time
-
-	// LowSolarStopIssuedAt records when this controller last stopped charging because solar could
-	// not cover the minimum current. Unlike the SoC cap, this one resumes automatically.
-	LowSolarStopIssuedAt *time.Time
-
 	ChargingState ChargingState
 
-	OverrideActive     bool
-	OverrideDetectedAt *time.Time
+	// Session is this controller's relationship to the charge session; SessionSince is when it
+	// entered that state. Since is what the settle window is measured against: telemetry emitted
+	// before our own stop landed still says Charging, and must not read as a manual restart.
+	Session      SessionState
+	SessionSince *time.Time
 
 	// LastSetAmps is the last value this controller successfully commanded, or nil if none.
 	LastSetAmps *int
