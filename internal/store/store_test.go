@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -249,3 +250,59 @@ func TestDatabaseFileIsNotWorldReadable(t *testing.T) {
 func ptr(v int) *int { return &v }
 
 func statFile(path string) (os.FileInfo, error) { return os.Stat(path) }
+
+// Opening a database created by the ORIGINAL schema must migrate it to a writable state. The
+// legacy override_active column carried NOT NULL, and a save that no longer supplies it failed on
+// every frame — in production only, because fresh test databases never had the column. This test
+// builds the old schema by hand so that gap can never reopen.
+func TestOpensAndMigratesAnOriginalSchemaDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("opening raw: %v", err)
+	}
+	if _, err := raw.Exec(`
+        CREATE TABLE vehicle_state (
+            vin                      TEXT PRIMARY KEY,
+            charge_amps              INTEGER,
+            reported_max_amps        INTEGER,
+            battery_level_percent    INTEGER,
+            soc_stop_issued_at       TEXT,
+            low_solar_stop_issued_at TEXT,
+            charging_state           TEXT    NOT NULL,
+            override_active          INTEGER NOT NULL,
+            override_detected_at     TEXT,
+            last_set_amps            INTEGER,
+            last_set_at              TEXT,
+            last_updated             TEXT    NOT NULL
+        );
+        INSERT INTO vehicle_state (vin, charging_state, override_active, last_updated, override_detected_at)
+        VALUES ('LEGACYVIN', 'Charging', 1, '2026-08-16T12:00:00Z', '2026-08-16T11:00:00Z');`); err != nil {
+		t.Fatalf("building legacy schema: %v", err)
+	}
+	raw.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a legacy database: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// The marker must have been folded into the session before the columns were dropped.
+	got, err := s.GetVehicleState(ctx, "LEGACYVIN")
+	if err != nil {
+		t.Fatalf("GetVehicleState: %v", err)
+	}
+	if got.Session != domain.SessionOverridden {
+		t.Errorf("Session = %v, want Overridden folded from the legacy marker", got.Session)
+	}
+
+	// And — the actual production failure — saving must work.
+	got.ChargeAmps = ptr(22)
+	if err := s.SaveVehicleState(ctx, got); err != nil {
+		t.Fatalf("SaveVehicleState on a migrated database: %v", err)
+	}
+}
