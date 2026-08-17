@@ -108,8 +108,10 @@ func Open(path string) (*Store, error) {
 	}
 
 	// Databases written before the session state machine carry its meaning in three marker
-	// columns. Fold them into the session once; the markers are left in place but never read
-	// again. Precedence matches the old code: an override outranks either stop.
+	// columns. Fold them into the session once, then DROP the legacy columns — leaving them was
+	// not harmless: override_active carried NOT NULL, and an INSERT that no longer supplies it
+	// fails on every save. Test databases never had the legacy columns, which is exactly why the
+	// suite stayed green while production could not persist a frame.
 	if _, err := db.Exec(`
         UPDATE vehicle_state SET
             session = CASE
@@ -127,6 +129,16 @@ func Open(path string) (*Store, error) {
 		if !strings.Contains(err.Error(), "no such column") {
 			db.Close()
 			return nil, fmt.Errorf("migrating markers to session: %w", err)
+		}
+	}
+
+	for _, col := range []string{
+		"override_active", "override_detected_at", "soc_stop_issued_at", "low_solar_stop_issued_at",
+	} {
+		if _, err := db.Exec(`ALTER TABLE vehicle_state DROP COLUMN ` + col); err != nil &&
+			!strings.Contains(err.Error(), "no such column") {
+			db.Close()
+			return nil, fmt.Errorf("dropping legacy column %s: %w", col, err)
 		}
 	}
 
