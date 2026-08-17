@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 // Observation is a telemetry frame reduced to the fields the override rule needs.
 //
@@ -22,6 +25,14 @@ type Observation struct {
 
 	// LatchDisengaged is a second unplug signal, from ChargePortLatch (118).
 	LatchDisengaged *bool
+
+	// Latitude/Longitude are the car's position (Location, 20). Consumed in the fold to compute
+	// AtHome, then discarded — the coordinate itself is never stored.
+	Latitude  *float64
+	Longitude *float64
+
+	// FastCharger is FastChargerPresent (39).
+	FastCharger *bool
 }
 
 // ApplyObservation folds a telemetry frame into the stored state and applies the manual-override
@@ -41,6 +52,15 @@ func ApplyObservation(state *VehicleState, obs Observation, opts ChargingOptions
 	}
 	if soc := obs.BatteryLevelPercent; soc != nil && *soc >= 0 && *soc <= 100 {
 		state.BatteryLevelPercent = intPtr(*soc)
+	}
+	if obs.FastCharger != nil {
+		v := *obs.FastCharger
+		state.FastCharger = &v
+	}
+	if opts.HomeConfigured() && obs.Latitude != nil && obs.Longitude != nil {
+		home := withinMeters(*obs.Latitude, *obs.Longitude,
+			opts.HomeLatitude, opts.HomeLongitude, opts.HomeRadiusM)
+		state.AtHome = &home
 	}
 
 	effective := state.ChargingState
@@ -62,6 +82,15 @@ func ApplyObservation(state *VehicleState, obs Observation, opts ChargingOptions
 
 	state.LastUpdated = obs.ObservedAt
 	return state
+}
+
+// withinMeters is an equirectangular distance test — ample at a 150m radius, where the error
+// against a true great-circle distance is far below GPS noise.
+func withinMeters(lat, lon, homeLat, homeLon, radiusM float64) bool {
+	const mPerDegLat = 111320.0
+	dLat := (lat - homeLat) * mPerDegLat
+	dLon := (lon - homeLon) * mPerDegLat * math.Cos(homeLat*math.Pi/180)
+	return dLat*dLat+dLon*dLon <= radiusM*radiusM
 }
 
 func shouldFlagOverride(state *VehicleState, obs Observation, opts ChargingOptions, effective ChargingState) bool {

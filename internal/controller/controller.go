@@ -36,7 +36,6 @@ type Commander interface {
 // Store is the persistence the loop and the ingest share.
 type Store interface {
 	GetVehicleState(ctx context.Context, vin string) (*domain.VehicleState, error)
-	LatestVehicleState(ctx context.Context) (*domain.VehicleState, error)
 	SaveVehicleState(ctx context.Context, v *domain.VehicleState) error
 	AddSolarReading(ctx context.Context, at time.Time, watts, amps float64) error
 	MaxAmpsSince(ctx context.Context, since time.Time) (*float64, error)
@@ -46,6 +45,7 @@ type Store interface {
 }
 
 type Controller struct {
+	vins     []string
 	store    Store
 	solar    SolarReader
 	commands Commander
@@ -63,10 +63,10 @@ type Controller struct {
 	mu sync.Mutex
 }
 
-func New(store Store, solar SolarReader, commands Commander, window *domain.PollingWindow,
+func New(vins []string, store Store, solar SolarReader, commands Commander, window *domain.PollingWindow,
 	opts domain.ChargingOptions, log *slog.Logger) *Controller {
-	return &Controller{store: store, solar: solar, commands: commands, window: window, opts: opts, log: log,
-		now: func() time.Time { return time.Now().UTC() }}
+	return &Controller{vins: vins, store: store, solar: solar, commands: commands, window: window,
+		opts: opts, log: log, now: func() time.Time { return time.Now().UTC() }}
 }
 
 // SetChargingOptions replaces the charging options. Used by tests to exercise a mode without
@@ -243,7 +243,11 @@ func (c *Controller) Evaluate(ctx context.Context, now time.Time) error {
 	return c.evaluate(ctx, now)
 }
 
-// evaluate decides and acts on current stored state. Shared by the tick and by every event.
+// evaluate decides and acts for every managed vehicle. Shared by the tick and by every event.
+//
+// Each car is judged on its own state. The previous approach acted on whichever car reported most
+// recently, and a second car being driven around town — battery level changes while driving —
+// out-shouts one sitting plugged in at home.
 func (c *Controller) evaluate(ctx context.Context, now time.Time) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -253,24 +257,33 @@ func (c *Controller) evaluate(ctx context.Context, now time.Time) error {
 		return err
 	}
 
-	vehicle, err := c.store.LatestVehicleState(ctx)
-	if err != nil {
-		return err
-	}
-
-	decision := domain.Decide(vehicle, maxAmps, c.window.IsOpen(now), c.opts, now)
-	c.log.Info("decision", "action", decision.Action.String(), "reason", decision.Reason)
-
-	// A sleeping car cannot be commanded, so the decision above can only ever skip. Waking is the
-	// separate question of whether that is worth $0.02 and a battery-draining wake window.
-	if decision.Action == domain.ActionSkipNotCharging && c.opts.WakeToCharge {
-		if err := c.considerWake(ctx, vehicle, maxAmps, now); err != nil {
-			c.log.Error("wake failed", "error", err)
+	for _, vin := range c.vins {
+		vehicle, err := c.store.GetVehicleState(ctx, vin)
+		if err != nil {
+			return err
 		}
-		return nil
-	}
+		if vehicle == nil {
+			continue // Never reported; nothing to decide about.
+		}
 
-	return c.act(ctx, vehicle, decision, now)
+		decision := domain.Decide(vehicle, maxAmps, c.window.IsOpen(now), c.opts, now)
+		c.log.Info("decision", "vin", vin,
+			"action", decision.Action.String(), "reason", decision.Reason)
+
+		// A sleeping car cannot be commanded, so the decision above can only ever skip. Waking is
+		// the separate question of whether that is worth $0.02 and a wake window.
+		if decision.Action == domain.ActionSkipNotCharging && c.opts.WakeToCharge {
+			if err := c.considerWake(ctx, vehicle, maxAmps, now); err != nil {
+				c.log.Error("wake failed", "vin", vin, "error", err)
+			}
+			continue
+		}
+
+		if err := c.act(ctx, vehicle, decision, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // considerWake evaluates every wake gate and, if they all pass, wakes the car. It does not charge:

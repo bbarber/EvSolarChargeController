@@ -97,38 +97,6 @@ func TestSaveVehicleStateUpsertsRatherThanDuplicating(t *testing.T) {
 	}
 }
 
-func TestLatestVehicleStatePicksTheMostRecentReporter(t *testing.T) {
-	// One wall connector is shared, so the most recent reporter is the car to act on.
-	s := newStore(t)
-	ctx := context.Background()
-
-	older := domain.NewVehicleState("OLDER", now.Add(-time.Hour))
-	newer := domain.NewVehicleState("NEWER", now)
-	for _, v := range []*domain.VehicleState{older, newer} {
-		if err := s.SaveVehicleState(ctx, v); err != nil {
-			t.Fatalf("SaveVehicleState: %v", err)
-		}
-	}
-
-	got, err := s.LatestVehicleState(ctx)
-	if err != nil {
-		t.Fatalf("LatestVehicleState: %v", err)
-	}
-	if got.VIN != "NEWER" {
-		t.Errorf("VIN = %s, want NEWER", got.VIN)
-	}
-}
-
-func TestLatestVehicleStateIsNilOnAnEmptyStore(t *testing.T) {
-	got, err := newStore(t).LatestVehicleState(context.Background())
-	if err != nil {
-		t.Fatalf("LatestVehicleState: %v", err)
-	}
-	if got != nil {
-		t.Errorf("got %+v, want nil", got)
-	}
-}
-
 func TestMaxAmpsSinceTakesTheWindowMaximum(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()

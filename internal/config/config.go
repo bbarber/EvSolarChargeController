@@ -82,6 +82,9 @@ func Load() (Config, error) {
 	cfg.Charging.WakeSocHeadroom = envInt("EVSOLAR_WAKE_SOC_HEADROOM", cfg.Charging.WakeSocHeadroom, fail)
 	cfg.Charging.WakeDays = envWeekdays("EVSOLAR_WAKE_DAYS", cfg.Charging.WakeDays, fail)
 	cfg.Charging.SustainedWindow = envDuration("EVSOLAR_SUSTAINED_WINDOW", cfg.Charging.SustainedWindow, fail)
+	cfg.Charging.HomeLatitude = envFloat("EVSOLAR_HOME_LAT", cfg.Charging.HomeLatitude, fail)
+	cfg.Charging.HomeLongitude = envFloat("EVSOLAR_HOME_LON", cfg.Charging.HomeLongitude, fail)
+	cfg.Charging.HomeRadiusM = envFloat("EVSOLAR_HOME_RADIUS_M", cfg.Charging.HomeRadiusM, fail)
 
 	cfg.Window.TimeZone = env("EVSOLAR_TIMEZONE", cfg.Window.TimeZone)
 	cfg.Window.StartHourLocal = envInt("EVSOLAR_WINDOW_START_HOUR", cfg.Window.StartHourLocal, fail)
@@ -110,6 +113,9 @@ func Load() (Config, error) {
 	if cfg.Window.StartHourLocal >= cfg.Window.EndHourLocal {
 		fail("EVSOLAR_WINDOW_START_HOUR (%d) must be before EVSOLAR_WINDOW_END_HOUR (%d)",
 			cfg.Window.StartHourLocal, cfg.Window.EndHourLocal)
+	}
+	if (cfg.Charging.HomeLatitude == 0) != (cfg.Charging.HomeLongitude == 0) {
+		fail("EVSOLAR_HOME_LAT and EVSOLAR_HOME_LON must be set together")
 	}
 	if _, err := time.LoadLocation(cfg.Window.TimeZone); err != nil {
 		fail("EVSOLAR_TIMEZONE %q is not a known IANA zone: %v", cfg.Window.TimeZone, err)

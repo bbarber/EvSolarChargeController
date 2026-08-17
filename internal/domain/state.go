@@ -104,6 +104,14 @@ type VehicleState struct {
 
 	// LastWakeAt is when this controller last woke the car, for the cooldown.
 	LastWakeAt *time.Time
+
+	// AtHome is whether the car's last reported position was within the home radius. Nil until a
+	// location frame has been seen. Only this boolean is stored — never the position itself.
+	AtHome *bool
+
+	// FastCharger is whether a DC fast charger is attached, from FastChargerPresent. A fast-charge
+	// session is never touched, wherever it is.
+	FastCharger *bool
 }
 
 func NewVehicleState(vin string, now time.Time) *VehicleState {

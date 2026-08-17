@@ -26,6 +26,8 @@ var TelemetryFields = map[string]int{
 	"ChargePortLatch":         60,  // second unplug signal, clears an override
 	"BatteryLevel":            300, // drives the state-of-charge cap
 	"Soc":                     300, // some firmware reports SoC here instead
+	"Location":                600, // drives the at-home gate; coarse on purpose, never stored raw
+	"FastChargerPresent":      60,  // a DC session is never touched, wherever it is
 }
 
 // RegisterTelemetry points the given vehicles at a fleet-telemetry server.

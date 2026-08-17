@@ -246,6 +246,11 @@ harmless, a retry storm is not.
   Thursday-night plug-in unreachable all Friday morning: the wake path hangs off the decision, and
   staleness preempted the decision. Likewise a resume against a known-asleep car reports
   SkipNotCharging — the door to the wake gates — rather than issuing a command that fails.
+- **Only the home connector is managed** when `EVSOLAR_HOME_LAT/LON` are set — no commands, not
+  even stops, anywhere else, and never on a DC fast charger. The telemetry schema has no charger
+  identity, so home is a position compared in-process; only the boolean `at_home` is stored. Each
+  VIN is evaluated independently — never reintroduce "act on the latest reporter": a driven car reports
+  constantly and eclipses the one charging at home.
 - **Waking is opt-in, day-restricted, rate-limited and counted.** It costs $0.02, drains the
   battery it is meant to fill, and is the only action that disturbs a car that did not ask to be.
   `domain.DecideWake` holds every gate; do not add a caller that bypasses it.
