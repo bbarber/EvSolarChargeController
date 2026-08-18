@@ -14,20 +14,34 @@ import (
 	"github.com/teslamotors/vehicle-command/pkg/sign"
 )
 
+// FieldConfig is one field's transmission settings in the vehicle-side telemetry configuration.
+type FieldConfig struct {
+	// IntervalSeconds is a floor, not a cadence: the vehicle transmits on change and no more
+	// often than this, so a parked car sends nothing at all.
+	IntervalSeconds int
+	// ResendIntervalSeconds, when non-zero, re-sends the current value at this cadence even if
+	// unchanged (firmware 2024.44.32+). Zero means on-change only.
+	ResendIntervalSeconds int
+}
+
 // TelemetryFields is the subscription this controller needs.
 //
-// Intervals are a floor, not a cadence: fleet-telemetry transmits on change and no more often than
-// this, so a parked car sends nothing at all.
-var TelemetryFields = map[string]int{
-	"DetailedChargeState":     60,  // authoritative charge state; ChargeState is deprecated
-	"ChargeAmps":              60,  // what override detection compares against
-	"ChargeCurrentRequest":    60,  // fallback for ChargeAmps
-	"ChargeCurrentRequestMax": 300, // the car's own ceiling, which caps our targets
-	"ChargePortLatch":         60,  // second unplug signal, clears an override
-	"BatteryLevel":            300, // drives the state-of-charge cap
-	"Soc":                     300, // some firmware reports SoC here instead
-	"Location":                600, // drives the at-home gate; coarse on purpose, never stored raw
-	"FastChargerPresent":      60,  // a DC session is never touched, wherever it is
+// Location carries a resend interval because it is the one signal whose silence is load-bearing:
+// a parked car's position never changes, so without periodic resend the at_home gate is stuck on
+// whatever frame happened to arrive last — and a drive home through cellular dead zones can end
+// with that frame saying "away" while the car sits on the home connector. Every other field either
+// changes while it matters (amps, battery level while charging) or is healed by the reconnect
+// snapshot (charge state).
+var TelemetryFields = map[string]FieldConfig{
+	"DetailedChargeState":     {IntervalSeconds: 60},                              // authoritative charge state; ChargeState is deprecated
+	"ChargeAmps":              {IntervalSeconds: 60},                              // what override detection compares against
+	"ChargeCurrentRequest":    {IntervalSeconds: 60},                              // fallback for ChargeAmps
+	"ChargeCurrentRequestMax": {IntervalSeconds: 300},                             // the car's own ceiling, which caps our targets
+	"ChargePortLatch":         {IntervalSeconds: 60},                              // second unplug signal, clears an override
+	"BatteryLevel":            {IntervalSeconds: 300},                             // drives the state-of-charge cap
+	"Soc":                     {IntervalSeconds: 300},                             // some firmware reports SoC here instead
+	"Location":                {IntervalSeconds: 600, ResendIntervalSeconds: 600}, // the at-home gate; coarse on purpose, never stored raw
+	"FastChargerPresent":      {IntervalSeconds: 60},                              // a DC session is never touched, wherever it is
 }
 
 // RegisterTelemetry points the given vehicles at a fleet-telemetry server.
@@ -50,16 +64,23 @@ func (c *Commander) RegisterTelemetry(ctx context.Context, vins []string, hostna
 	}
 
 	fields := make(map[string]any, len(TelemetryFields))
-	for name, interval := range TelemetryFields {
-		fields[name] = map[string]any{"interval_seconds": interval}
+	for name, fc := range TelemetryFields {
+		entry := map[string]any{"interval_seconds": fc.IntervalSeconds}
+		if fc.ResendIntervalSeconds > 0 {
+			entry["resend_interval_seconds"] = fc.ResendIntervalSeconds
+		}
+		fields[name] = entry
 	}
 
 	// "aud" and "iss" are overwritten by the signer, so they are deliberately not set here.
+	// prefer_typed is required for resend_interval_seconds to take effect; the decoder has always
+	// accepted the typed variants (and falls back to strings for numerics), so it is safe to pin.
 	config := jwt.MapClaims{
-		"hostname": hostname,
-		"port":     port,
-		"ca":       caCertPEM,
-		"fields":   fields,
+		"hostname":     hostname,
+		"port":         port,
+		"ca":           caCertPEM,
+		"fields":       fields,
+		"prefer_typed": true,
 	}
 
 	signed, err := sign.SignMessageForFleet(c.key, "TelemetryClient", config)

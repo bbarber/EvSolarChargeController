@@ -26,7 +26,7 @@ type Observation struct {
 	// LatchDisengaged is a second unplug signal, from ChargePortLatch (118).
 	LatchDisengaged *bool
 
-	// Latitude/Longitude are the car's position (Location, 20). Consumed in the fold to compute
+	// Latitude/Longitude are the car's position (Location, 21). Consumed in the fold to compute
 	// AtHome, then discarded — the coordinate itself is never stored.
 	Latitude  *float64
 	Longitude *float64
