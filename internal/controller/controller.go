@@ -31,6 +31,7 @@ type SolarReader interface {
 type Recorder interface {
 	RecordStatus(ctx context.Context, v *domain.VehicleState)
 	RecordSolar(ctx context.Context, at time.Time, watts, amps float64)
+	RecordCharge(ctx context.Context, at time.Time, vin string, amps int, watts float64)
 	RecordEvent(ctx context.Context, at time.Time, vin, kind, action, reason string)
 }
 
@@ -192,7 +193,16 @@ func (c *Controller) HandleTelemetry(ctx context.Context, raw []byte) error {
 	}
 	c.mu.Unlock()
 
-	c.record(func(r Recorder) { r.RecordStatus(ctx, state) })
+	c.record(func(r Recorder) {
+		r.RecordStatus(ctx, state)
+		// One draw sample per frame. A charging car reports every minute or so; a stopped one
+		// only on transitions, so the zero that closes the step arrives exactly once.
+		draw := 0
+		if state.ChargingState.IsActivelyCharging() && state.ChargeAmps != nil {
+			draw = *state.ChargeAmps
+		}
+		r.RecordCharge(ctx, obs.ObservedAt, obs.VIN, draw, float64(draw)*c.opts.SystemVoltage)
+	})
 
 	// Evaluate on the event. A plug-in acts within seconds instead of waiting out the tick, and a
 	// frame that tripped the override stops us commanding on stale intent. Decisions are free —

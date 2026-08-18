@@ -12,6 +12,19 @@ import (
 	"github.com/bbarber/EvSolarChargeController/internal/domain"
 )
 
+type fakeRecorder struct {
+	charges     []int
+	chargeWatts []float64
+}
+
+func (f *fakeRecorder) RecordStatus(ctx context.Context, v *domain.VehicleState)           {}
+func (f *fakeRecorder) RecordSolar(ctx context.Context, at time.Time, watts, amps float64) {}
+func (f *fakeRecorder) RecordEvent(ctx context.Context, at time.Time, vin, k, a, r string) {}
+func (f *fakeRecorder) RecordCharge(ctx context.Context, at time.Time, vin string, amps int, watts float64) {
+	f.charges = append(f.charges, amps)
+	f.chargeWatts = append(f.chargeWatts, watts)
+}
+
 // Decisions ride on events; the clock only fetches solar. These tests pin the difference that
 // motivated the change: everything observable used to wait up to twenty minutes for a tick, and
 // the car does not stay awake that long.
@@ -202,5 +215,43 @@ func TestTheDrivenCarDoesNotEclipseTheChargingOne(t *testing.T) {
 	}
 	if cmd.stops != 0 && len(cmd.starts) == 0 {
 		t.Errorf("unexpected commands: %+v", cmd)
+	}
+}
+
+// Every telemetry fold produces one draw sample, and the zero on a stop is what closes the step
+// on the dashboard graph — without it the chart holds the last current forever.
+func TestTelemetryFoldsEmitChargeSamples(t *testing.T) {
+	now := time.Date(2026, 8, 18, 19, 41, 0, 0, time.UTC)
+	c, st := newController(t, &fakeSolar{}, &fakeCommander{})
+	c.now = func() time.Time { return now }
+	rec := &fakeRecorder{}
+	c.SetRecorder(rec)
+	_ = st
+
+	ctx := context.Background()
+	frame := func(state protos.DetailedChargeStateValue, amps int32) []byte {
+		raw, _ := proto.Marshal(&protos.Payload{
+			Vin: testVIN, CreatedAt: timestamppb.New(now),
+			Data: []*protos.Datum{
+				{Key: protos.Field_DetailedChargeState, Value: &protos.Value{
+					Value: &protos.Value_DetailedChargeStateValue{DetailedChargeStateValue: state}}},
+				{Key: protos.Field_ChargeAmps, Value: &protos.Value{Value: &protos.Value_IntValue{IntValue: amps}}},
+			},
+		})
+		return raw
+	}
+
+	if err := c.HandleRecord(ctx, "evsolar_V", frame(protos.DetailedChargeStateValue_DetailedChargeStateCharging, 12)); err != nil {
+		t.Fatalf("charging frame: %v", err)
+	}
+	if err := c.HandleRecord(ctx, "evsolar_V", frame(protos.DetailedChargeStateValue_DetailedChargeStateStopped, 12)); err != nil {
+		t.Fatalf("stopped frame: %v", err)
+	}
+
+	if len(rec.charges) != 2 || rec.charges[0] != 12 || rec.charges[1] != 0 {
+		t.Fatalf("charge samples = %v, want [12 0] — the zero closes the step", rec.charges)
+	}
+	if rec.chargeWatts[0] != 12*240 {
+		t.Errorf("watts = %v, want amps x the configured voltage", rec.chargeWatts[0])
 	}
 }
