@@ -35,6 +35,11 @@ type Config struct {
 	TeslaRefreshTokenSeed   string
 
 	LogLevel string
+
+	// SupabaseURL/SupabaseServiceKey enable the dashboard mirror. Optional pair: unset means no
+	// mirroring, and charging never depends on it either way.
+	SupabaseURL        string
+	SupabaseServiceKey string
 }
 
 // Load reads configuration and validates it. Every failure is reported at once rather than one per
@@ -49,6 +54,9 @@ func Load() (Config, error) {
 		Enphase:      enphase.DefaultOptions(),
 		Tesla:        tesla.DefaultOptions(),
 		LogLevel:     env("EVSOLAR_LOG_LEVEL", "info"),
+
+		SupabaseURL:        os.Getenv("EVSOLAR_SUPABASE_URL"),
+		SupabaseServiceKey: os.Getenv("EVSOLAR_SUPABASE_SERVICE_KEY"),
 
 		EnphaseRefreshTokenSeed: os.Getenv("EVSOLAR_ENPHASE_REFRESH_TOKEN"),
 		TeslaRefreshTokenSeed:   os.Getenv("EVSOLAR_TESLA_REFRESH_TOKEN"),
@@ -113,6 +121,9 @@ func Load() (Config, error) {
 	if cfg.Window.StartHourLocal >= cfg.Window.EndHourLocal {
 		fail("EVSOLAR_WINDOW_START_HOUR (%d) must be before EVSOLAR_WINDOW_END_HOUR (%d)",
 			cfg.Window.StartHourLocal, cfg.Window.EndHourLocal)
+	}
+	if (cfg.SupabaseURL == "") != (cfg.SupabaseServiceKey == "") {
+		fail("EVSOLAR_SUPABASE_URL and EVSOLAR_SUPABASE_SERVICE_KEY must be set together")
 	}
 	if (cfg.Charging.HomeLatitude == 0) != (cfg.Charging.HomeLongitude == 0) {
 		fail("EVSOLAR_HOME_LAT and EVSOLAR_HOME_LON must be set together")

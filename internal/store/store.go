@@ -58,6 +58,14 @@ CREATE TABLE IF NOT EXISTS wake_events (
     at  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS mirror_outbox (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    tbl          TEXT NOT NULL,
+    conflict_key TEXT NOT NULL DEFAULT '',
+    payload      BLOB NOT NULL,
+    created_at   TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS secrets (
     name       TEXT PRIMARY KEY,
     value      TEXT NOT NULL,
@@ -362,6 +370,37 @@ func (s *Store) MaxAmpsSince(ctx context.Context, since time.Time) (*float64, er
 	return &max.Float64, nil
 }
 
+// SolarReading is one production sample, for the mirror's backfill.
+type SolarReading struct {
+	At    time.Time
+	Watts float64
+	Amps  float64
+}
+
+// AllSolarReadings returns every retained reading, oldest first.
+func (s *Store) AllSolarReadings(ctx context.Context) ([]SolarReading, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT reading_at, watts, amps FROM solar_readings ORDER BY reading_at`)
+	if err != nil {
+		return nil, fmt.Errorf("reading all solar readings: %w", err)
+	}
+	defer rows.Close()
+
+	var out []SolarReading
+	for rows.Next() {
+		var at string
+		var r SolarReading
+		if err := rows.Scan(&at, &r.Watts, &r.Amps); err != nil {
+			return nil, err
+		}
+		if r.At, err = time.Parse(timeLayout, at); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // ReadingsAboveSince counts readings at or after since that clear minAmps. More than one is what
 // distinguishes a sustained window from a single sunbreak.
 func (s *Store) ReadingsAboveSince(ctx context.Context, since time.Time, minAmps float64) (int, error) {
@@ -431,6 +470,55 @@ func (s *Store) MonthlyCallCount(ctx context.Context, provider string, at time.T
 		return 0, fmt.Errorf("reading api usage for %s: %w", provider, err)
 	}
 	return count, nil
+}
+
+// ---------------------------------------------------------------------------
+// Mirror outbox
+// ---------------------------------------------------------------------------
+
+func (s *Store) EnqueueMirror(ctx context.Context, table, conflictKey string, payload []byte) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO mirror_outbox (tbl, conflict_key, payload, created_at) VALUES (?, ?, ?, ?)`,
+		table, conflictKey, payload, formatTime(time.Now()))
+	if err != nil {
+		return fmt.Errorf("enqueueing mirror row for %s: %w", table, err)
+	}
+	return nil
+}
+
+// OutboxRow is one queued mirror shipment.
+type OutboxRow struct {
+	ID          int64
+	Table       string
+	ConflictKey string
+	Payload     []byte
+}
+
+func (s *Store) PendingMirror(ctx context.Context, limit int) ([]OutboxRow, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tbl, conflict_key, payload FROM mirror_outbox ORDER BY id LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("reading the mirror outbox: %w", err)
+	}
+	defer rows.Close()
+
+	var out []OutboxRow
+	for rows.Next() {
+		var r OutboxRow
+		if err := rows.Scan(&r.ID, &r.Table, &r.ConflictKey, &r.Payload); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteMirror(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM mirror_outbox WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("deleting mirror row %d: %w", id, err)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

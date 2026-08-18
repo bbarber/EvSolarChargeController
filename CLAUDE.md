@@ -219,6 +219,10 @@ harmless, a retry storm is not.
 
 ---
 
+**The dashboard mirror is one-way and optional.** `internal/mirror` ships state to Supabase through
+a SQLite outbox; the web app (bbarber/EvSolarDashboard, Vercel + Supabase) only reads. Nothing in
+charging may ever depend on Supabase being reachable, and Record* calls must never fail the caller.
+
 ## Invariants — do not break these without a decision
 
 - **Decisions ride on events; the clock exists for the Enphase poll.** Telemetry and connectivity
