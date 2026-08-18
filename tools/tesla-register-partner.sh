@@ -23,8 +23,10 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 66
 fi
 
-# shellcheck disable=SC1090
-set -a; source "$ENV_FILE"; set +a
+set -a
+# shellcheck source=/dev/null
+source "$ENV_FILE"
+set +a
 
 for var in TESLA_CLIENT_ID TESLA_CLIENT_SECRET; do
   if [[ -z "${!var:-}" ]]; then
