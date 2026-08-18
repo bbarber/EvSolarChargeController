@@ -22,6 +22,7 @@ import (
 	"github.com/bbarber/EvSolarChargeController/internal/controller"
 	"github.com/bbarber/EvSolarChargeController/internal/domain"
 	"github.com/bbarber/EvSolarChargeController/internal/enphase"
+	"github.com/bbarber/EvSolarChargeController/internal/mirror"
 	"github.com/bbarber/EvSolarChargeController/internal/store"
 	"github.com/bbarber/EvSolarChargeController/internal/telemetry"
 	"github.com/bbarber/EvSolarChargeController/internal/tesla"
@@ -68,6 +69,25 @@ func run() error {
 	}
 
 	ctrl := controller.New(cfg.VINs, db, solar, commander, window, cfg.Charging, log.With("component", "controller"))
+
+	mirrorCfg := mirror.Config{URL: cfg.SupabaseURL, ServiceKey: cfg.SupabaseServiceKey}
+	var dash *mirror.Mirror
+	if mirrorCfg.Enabled() {
+		dash = mirror.New(mirrorCfg, db, log.With("component", "mirror"))
+		ctrl.SetRecorder(dash)
+		// Backfill so the dashboard is not empty on first deploy: current snapshots and whatever
+		// readings are retained. Upserts make this idempotent across restarts.
+		for _, vin := range cfg.VINs {
+			if v, err := db.GetVehicleState(ctx, vin); err == nil && v != nil {
+				dash.RecordStatus(ctx, v)
+			}
+		}
+		if readings, err := db.AllSolarReadings(ctx); err == nil {
+			for _, rr := range readings {
+				dash.RecordSolar(ctx, rr.At, rr.Watts, rr.Amps)
+			}
+		}
+	}
 	subscriber := telemetry.NewSubscriber(cfg.ZMQEndpoint, cfg.ZMQTopic, log.With("component", "telemetry"))
 
 	log.Info("starting",
@@ -82,6 +102,7 @@ func run() error {
 		"max_wakes_per_day", cfg.Charging.MaxWakesPerDay,
 		"enphase_budget", cfg.Enphase.MonthlyCallBudget,
 		"command_key", commander.KeyFingerprint(),
+		"mirror", mirrorCfg.Enabled(),
 		"database", cfg.DatabasePath)
 
 	var wg sync.WaitGroup
@@ -105,6 +126,14 @@ func run() error {
 			errs <- fmt.Errorf("control loop: %w", err)
 		}
 	}()
+
+	if dash != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dash.Run(ctx) // outbox shipper; outages cost freshness, never charging
+		}()
+	}
 
 	select {
 	case <-ctx.Done():

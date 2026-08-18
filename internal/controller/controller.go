@@ -7,6 +7,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -23,6 +24,14 @@ var TickMinutes = []int{0, 20, 40}
 // SolarReader is the subset of the Enphase client the loop needs.
 type SolarReader interface {
 	CurrentProduction(ctx context.Context, now time.Time) enphase.Result
+}
+
+// Recorder receives copies of what happened, for the dashboard. Nil-safe: a nil recorder means
+// no mirroring, and no Record call may ever fail the caller.
+type Recorder interface {
+	RecordStatus(ctx context.Context, v *domain.VehicleState)
+	RecordSolar(ctx context.Context, at time.Time, watts, amps float64)
+	RecordEvent(ctx context.Context, at time.Time, vin, kind, action, reason string)
 }
 
 // Commander sends signed commands to a vehicle.
@@ -52,6 +61,7 @@ type Controller struct {
 	window   *domain.PollingWindow
 	opts     domain.ChargingOptions
 	log      *slog.Logger
+	recorder Recorder // may be nil
 
 	// now is the clock, replaceable in tests. Event-driven paths need a time and must not
 	// invent one per call site.
@@ -67,6 +77,15 @@ func New(vins []string, store Store, solar SolarReader, commands Commander, wind
 	opts domain.ChargingOptions, log *slog.Logger) *Controller {
 	return &Controller{vins: vins, store: store, solar: solar, commands: commands, window: window,
 		opts: opts, log: log, now: func() time.Time { return time.Now().UTC() }}
+}
+
+// SetRecorder attaches the dashboard mirror. Optional; nil disables mirroring.
+func (c *Controller) SetRecorder(r Recorder) { c.recorder = r }
+
+func (c *Controller) record(fn func(Recorder)) {
+	if c.recorder != nil {
+		fn(c.recorder)
+	}
 }
 
 // SetChargingOptions replaces the charging options. Used by tests to exercise a mode without
@@ -124,6 +143,15 @@ func (c *Controller) handleConnectivity(ctx context.Context, raw []byte) error {
 	}
 	c.mu.Unlock()
 
+	c.record(func(r Recorder) {
+		online := "offline"
+		if conn.Online {
+			online = "online"
+		}
+		r.RecordEvent(ctx, conn.ObservedAt, conn.VIN, "connectivity", online, "network "+conn.Network)
+		r.RecordStatus(ctx, state)
+	})
+
 	// Evaluate on the event, not the next tick. This is the moment that matters most: a car that
 	// just came online after our wake is awake NOW, and twenty minutes from now it will not be.
 	// Today's first wake was wasted exactly this way.
@@ -163,6 +191,8 @@ func (c *Controller) HandleTelemetry(ctx context.Context, raw []byte) error {
 		return err
 	}
 	c.mu.Unlock()
+
+	c.record(func(r Recorder) { r.RecordStatus(ctx, state) })
 
 	// Evaluate on the event. A plug-in acts within seconds instead of waiting out the tick, and a
 	// frame that tripped the override stops us commanding on stale intent. Decisions are free —
@@ -223,6 +253,9 @@ func (c *Controller) Evaluate(ctx context.Context, now time.Time) error {
 			}
 			c.log.Info("solar reading recorded",
 				"watts", result.Production.Watts, "amps", amps, "at", result.Production.ReadingAt)
+			c.record(func(r Recorder) {
+				r.RecordSolar(ctx, result.Production.ReadingAt, result.Production.Watts, amps)
+			})
 		} else {
 			// A failed poll is not evidence of low production, so the cycle continues on whatever
 			// readings are still inside the window.
@@ -269,6 +302,18 @@ func (c *Controller) evaluate(ctx context.Context, now time.Time) error {
 		decision := domain.Decide(vehicle, maxAmps, c.window.IsOpen(now), c.opts, now)
 		c.log.Info("decision", "vin", vin,
 			"action", decision.Action.String(), "reason", decision.Reason)
+
+		// Mirror decisions that say something happened or changed; the every-few-minutes quiet
+		// skips would bury the interesting rows.
+		switch decision.Action {
+		case domain.ActionSkipInsufficientSolar, domain.ActionSkipNoSolarData,
+			domain.ActionSkipNotCharging, domain.ActionSkipAlreadyAtTarget,
+			domain.ActionSkipNotAtHome, domain.ActionSkipAtSocCap, domain.ActionSkipNoVehicleState:
+		default:
+			c.record(func(r Recorder) {
+				r.RecordEvent(ctx, now, vin, "decision", decision.Action.String(), decision.Reason)
+			})
+		}
 
 		// A sleeping car cannot be commanded, so the decision above can only ever skip. Waking is
 		// the separate question of whether that is worth $0.02 and a wake window.
@@ -326,6 +371,7 @@ func (c *Controller) considerWake(ctx context.Context, vehicle *domain.VehicleSt
 	if err := c.commands.Wake(ctx, vehicle.VIN); err != nil {
 		return err
 	}
+	c.record(func(r Recorder) { r.RecordEvent(ctx, now, vehicle.VIN, "wake", "wake_up", d.Reason) })
 
 	// Recorded only on success, so a failed wake does not consume the daily allowance — but the
 	// cooldown is set either way by the caller retrying no sooner than the next tick.
@@ -380,7 +426,19 @@ func (c *Controller) act(ctx context.Context, vehicle *domain.VehicleState, d do
 		return nil // A skip changes no state.
 	}
 
-	return c.store.SaveVehicleState(ctx, vehicle)
+	if err := c.store.SaveVehicleState(ctx, vehicle); err != nil {
+		return err
+	}
+	c.record(func(r Recorder) {
+		action := d.Action.String()
+		amps := ""
+		if d.TargetAmps != nil {
+			amps = fmt.Sprintf(" %dA", *d.TargetAmps)
+		}
+		r.RecordEvent(ctx, now, vehicle.VIN, "command", action+amps, d.Reason)
+		r.RecordStatus(ctx, vehicle)
+	})
+	return nil
 }
 
 // NextTick returns the next scheduled evaluation at or after now.
