@@ -89,6 +89,19 @@ func (m *Mirror) RecordSolar(ctx context.Context, at time.Time, watts, amps floa
 	m.enqueue(ctx, "solar_readings", "reading_at", payload)
 }
 
+// RecordCharge mirrors one sample of what the car is drawing. Zero-amp samples matter: they are
+// what closes a step when charging stops, so the graph falls to the baseline instead of holding
+// the last current forever.
+func (m *Mirror) RecordCharge(ctx context.Context, at time.Time, vin string, amps int, watts float64) {
+	if m == nil {
+		return
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"vin": vin, "reading_at": at.UTC(), "amps": amps, "watts": watts,
+	})
+	m.enqueue(ctx, "charge_readings", "vin,reading_at", payload)
+}
+
 // RecordEvent mirrors one interesting moment: a decision, a connectivity change, a wake, a
 // command, an error.
 func (m *Mirror) RecordEvent(ctx context.Context, at time.Time, vin, kind, action, reason string) {
