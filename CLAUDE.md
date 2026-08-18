@@ -195,6 +195,14 @@ dispatchers; a `_comment` string fails to unmarshal and panics the server on sta
 partner account was registered with. A DuckDNS name carries one A record and DuckDNS has no CNAME,
 so the public key and the telemetry endpoint must share a host — hence the nginx container.
 
+**On-change telemetry strands `at_home`.** Signals transmit only when they change, and a parked
+car's Location never changes. A drive home through cellular dead zones drops the frames that would
+have said "home", freezing `at_home` on "away" while the car charges on the home connector — the
+controller then skips the session entirely (observed live 2026-08-18: car 23m from home, 22A on
+grid, `SkipNotAtHome` every cycle). Location is therefore registered with
+`resend_interval_seconds: 600` plus `prefer_typed: true` (which resend requires). If the gate ever
+sticks again, first check the registered config with `evsolar-register -status`.
+
 **Refresh tokens rotate on every use.** Both Enphase and Tesla invalidate the previous token when
 issuing a new one. The copy in SQLite is authoritative once the first refresh has happened; the
 `.env` value is a **seed**, used only when the store has none. Never re-seed from a stale `.env`,
