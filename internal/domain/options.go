@@ -66,6 +66,11 @@ type ChargingOptions struct {
 	// WakeDays restricts waking to particular days. Empty means every day.
 	WakeDays []time.Weekday
 
+	// WakeDaysByVIN overrides WakeDays for individual vehicles — the cars have different owners
+	// with different tolerance for being woken. A VIN present in the map uses its own list (an
+	// empty list meaning every day); a VIN absent falls back to WakeDays.
+	WakeDaysByVIN map[string][]time.Weekday
+
 	// MaxWakesPerDay is a hard ceiling. Tesla sizes the $10 monthly discount at roughly two wakes
 	// a day for two vehicles, so this is their number rather than an arbitrary one.
 	MaxWakesPerDay int
@@ -118,6 +123,15 @@ func DefaultChargingOptions() ChargingOptions {
 		SustainedWindow:        45 * time.Minute,
 		HomeRadiusM:            150,
 	}
+}
+
+// WakeDaysFor is the wake-day restriction for one vehicle: its own override when present, the
+// fleet-wide list otherwise.
+func (o ChargingOptions) WakeDaysFor(vin string) []time.Weekday {
+	if days, ok := o.WakeDaysByVIN[vin]; ok {
+		return days
+	}
+	return o.WakeDays
 }
 
 // HomeConfigured reports whether the home gate is active. Unset coordinates mean the gate is off

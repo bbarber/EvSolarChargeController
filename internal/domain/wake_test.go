@@ -87,6 +87,30 @@ func TestOnlyWakesOnPermittedDays(t *testing.T) {
 	}
 }
 
+// The two cars have different owners; one accepting a Friday wake must not opt the other in.
+func TestPerVinDayOverrideBeatsTheFleetList(t *testing.T) {
+	opts := wakeOptions() // fleet-wide Fri/Sat/Sun
+	opts.WakeDaysByVIN = map[string][]time.Weekday{
+		testVIN: {time.Saturday, time.Sunday},
+	}
+
+	if d := DecideWake(wakeReady(), goodInputs(wakeFriday), opts); d.Wake {
+		t.Errorf("expected no wake on Friday for a Sat/Sun-only VIN, got: %s", d.Reason)
+	}
+
+	saturday := wakeFriday.AddDate(0, 0, 1)
+	if d := DecideWake(wakeReady(), goodInputs(saturday), opts); !d.Wake {
+		t.Errorf("expected a Saturday wake for a Sat/Sun-only VIN: %s", d.Reason)
+	}
+
+	// A VIN not in the map keeps the fleet-wide list.
+	other := wakeReady()
+	other.VIN = "OTHERVIN123456789"
+	if d := DecideWake(other, goodInputs(wakeFriday), opts); !d.Wake {
+		t.Errorf("expected the fleet-wide Friday wake for an unlisted VIN: %s", d.Reason)
+	}
+}
+
 func TestAnEmptyDayListMeansEveryDay(t *testing.T) {
 	opts := wakeOptions()
 	opts.WakeDays = nil

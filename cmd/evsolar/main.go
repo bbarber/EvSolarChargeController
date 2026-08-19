@@ -99,6 +99,7 @@ func run() error {
 		"start_when_plugged_in", cfg.Charging.StartWhenPluggedIn,
 		"wake_to_charge", cfg.Charging.WakeToCharge,
 		"wake_days", cfg.Charging.WakeDays,
+		"wake_days_by_vin", cfg.Charging.WakeDaysByVIN,
 		"max_wakes_per_day", cfg.Charging.MaxWakesPerDay,
 		"enphase_budget", cfg.Enphase.MonthlyCallBudget,
 		"command_key", commander.KeyFingerprint(),

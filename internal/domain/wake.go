@@ -48,9 +48,9 @@ func DecideWake(vehicle *VehicleState, in WakeInputs, opts ChargingOptions) Wake
 		return noWake("No vehicle state.")
 	}
 
-	if !dayAllowed(in.LocalNow.Weekday(), opts.WakeDays) {
-		return noWake("%s is not a permitted wake day (%s).",
-			in.LocalNow.Weekday(), describeDays(opts.WakeDays))
+	if days := opts.WakeDaysFor(vehicle.VIN); !dayAllowed(in.LocalNow.Weekday(), days) {
+		return noWake("%s is not a permitted wake day for %s (%s).",
+			in.LocalNow.Weekday(), vehicle.VIN, describeDays(days))
 	}
 
 	if in.WakesToday >= opts.MaxWakesPerDay {

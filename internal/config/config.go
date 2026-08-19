@@ -89,6 +89,7 @@ func Load() (Config, error) {
 	cfg.Charging.WakeCooldown = envDuration("EVSOLAR_WAKE_COOLDOWN", cfg.Charging.WakeCooldown, fail)
 	cfg.Charging.WakeSocHeadroom = envInt("EVSOLAR_WAKE_SOC_HEADROOM", cfg.Charging.WakeSocHeadroom, fail)
 	cfg.Charging.WakeDays = envWeekdays("EVSOLAR_WAKE_DAYS", cfg.Charging.WakeDays, fail)
+	cfg.Charging.WakeDaysByVIN = envWeekdaysByVIN("EVSOLAR_WAKE_DAYS_", fail)
 	cfg.Charging.SustainedWindow = envDuration("EVSOLAR_SUSTAINED_WINDOW", cfg.Charging.SustainedWindow, fail)
 	cfg.Charging.HomeLatitude = envFloat("EVSOLAR_HOME_LAT", cfg.Charging.HomeLatitude, fail)
 	cfg.Charging.HomeLongitude = envFloat("EVSOLAR_HOME_LON", cfg.Charging.HomeLongitude, fail)
@@ -207,6 +208,27 @@ func envWeekdays(key string, fallback []time.Weekday, fail func(string, ...any))
 			continue
 		}
 		out = append(out, day)
+	}
+	return out
+}
+
+// envWeekdaysByVIN collects per-vehicle day lists from variables named <prefix><VIN>, e.g.
+// EVSOLAR_WAKE_DAYS_7SA...=Sat,Sun. A VIN absent from the environment keeps the fleet-wide list.
+func envWeekdaysByVIN(prefix string, fail func(string, ...any)) map[string][]time.Weekday {
+	var out map[string][]time.Weekday
+	for _, kv := range os.Environ() {
+		name, _, ok := strings.Cut(kv, "=")
+		if !ok || !strings.HasPrefix(name, prefix) || name == strings.TrimSuffix(prefix, "_") {
+			continue
+		}
+		vin := strings.TrimPrefix(name, prefix)
+		if vin == "" {
+			continue
+		}
+		if out == nil {
+			out = make(map[string][]time.Weekday)
+		}
+		out[vin] = envWeekdays(name, nil, fail)
 	}
 	return out
 }

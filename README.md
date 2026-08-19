@@ -269,6 +269,7 @@ All settings come from the environment; see [deploy/.env.example](deploy/.env.ex
 | `EVSOLAR_START_WHEN_PLUGGED_IN` | false | Start an idle plugged-in car when there is sun for it |
 | `EVSOLAR_WAKE_TO_CHARGE` | false | Wake a sleeping plugged-in car to use available sun |
 | `EVSOLAR_WAKE_DAYS` | Fri,Sat,Sun | Days waking is permitted; empty means every day |
+| `EVSOLAR_WAKE_DAYS_<VIN>` | — | Per-vehicle override of `EVSOLAR_WAKE_DAYS` for one VIN |
 | `EVSOLAR_MAX_WAKES_PER_DAY` | 2 | Hard ceiling; a wake costs $0.02 |
 | `EVSOLAR_WAKE_COOLDOWN` | 1h | Minimum gap between wakes |
 | `EVSOLAR_WAKE_SOC_HEADROOM` | 10 | Points below the cap required to justify a wake |
