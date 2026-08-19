@@ -139,6 +139,70 @@ func (c *Commander) Wake(ctx context.Context, vin string) error {
 	return nil
 }
 
+// Location reads the vehicle's current position.
+//
+// This is the one read this controller makes against the car, and it is not a walk back from
+// "never poll the vehicle". That rule exists so routine collection cannot *wake* a car parked far
+// from a charger; callers gate this on connectivity already reporting the vehicle online and
+// plugged in, so nothing is disturbed. See domain.DecidePositionFix for the gates.
+//
+// It exists because Location telemetry transmits on change: a car that drove home through a dead
+// zone never sends the frame that would say "home", and the stale answer governs indefinitely.
+//
+// The coordinate is returned for immediate comparison and is never persisted by the caller.
+func (c *Commander) Location(ctx context.Context, vin string) (lat, lon float64, err error) {
+	token, err := c.accessTokenFor(ctx, time.Now())
+	if err != nil {
+		return 0, 0, err
+	}
+
+	acct, err := account.New(token, c.opts.UserAgent)
+	if err != nil {
+		return 0, 0, fmt.Errorf("building the Tesla account client: %w", err)
+	}
+
+	endpoint := fmt.Sprintf("https://%s/api/1/vehicles/%s/vehicle_data?endpoints=location_data",
+		acct.Host, vin)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("building the location request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("User-Agent", c.opts.UserAgent)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, 0, fmt.Errorf("reading location for %s: %w", vin, err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 65536))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// 408 is Tesla's "the car did not answer". It is a normal outcome for a car that dozed off
+		// between the connectivity event and this call, not a fault to escalate.
+		return 0, 0, fmt.Errorf("location for %s returned HTTP %d: %s",
+			vin, resp.StatusCode, truncate(string(body), 300))
+	}
+
+	var payload struct {
+		Response struct {
+			DriveState struct {
+				Latitude  *float64 `json:"latitude"`
+				Longitude *float64 `json:"longitude"`
+			} `json:"drive_state"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return 0, 0, fmt.Errorf("location for %s returned an unreadable body: %w", vin, err)
+	}
+	ds := payload.Response.DriveState
+	if ds.Latitude == nil || ds.Longitude == nil {
+		// Almost always a missing vehicle_location scope; the request itself succeeded.
+		return 0, 0, fmt.Errorf("location for %s carried no coordinates", vin)
+	}
+	return *ds.Latitude, *ds.Longitude, nil
+}
+
 // StopCharging ends the session. Used at the state-of-charge cap and when solar cannot cover the
 // connector minimum.
 func (c *Commander) StopCharging(ctx context.Context, vin string) error {

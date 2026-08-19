@@ -91,6 +91,8 @@ func Load() (Config, error) {
 	cfg.Charging.WakeDays = envWeekdays("EVSOLAR_WAKE_DAYS", cfg.Charging.WakeDays, fail)
 	cfg.Charging.WakeDaysByVIN = envWeekdaysByVIN("EVSOLAR_WAKE_DAYS_", fail)
 	cfg.Charging.SustainedWindow = envDuration("EVSOLAR_SUSTAINED_WINDOW", cfg.Charging.SustainedWindow, fail)
+	cfg.Charging.PositionMaxAge = envDuration("EVSOLAR_POSITION_MAX_AGE", cfg.Charging.PositionMaxAge, fail)
+	cfg.Charging.PositionRefreshCooldown = envDuration("EVSOLAR_POSITION_REFRESH_COOLDOWN", cfg.Charging.PositionRefreshCooldown, fail)
 	cfg.Charging.HomeLatitude = envFloat("EVSOLAR_HOME_LAT", cfg.Charging.HomeLatitude, fail)
 	cfg.Charging.HomeLongitude = envFloat("EVSOLAR_HOME_LON", cfg.Charging.HomeLongitude, fail)
 	cfg.Charging.HomeRadiusM = envFloat("EVSOLAR_HOME_RADIUS_M", cfg.Charging.HomeRadiusM, fail)

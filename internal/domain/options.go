@@ -95,6 +95,16 @@ type ChargingOptions struct {
 	HomeLongitude float64
 	HomeRadiusM   float64
 
+	// PositionMaxAge is how long a home determination stays authoritative. Location transmits on
+	// change, and a parked car's position never changes, so without an expiry the last frame of a
+	// drive governs forever — a car that drove home through a dead zone stays "away" all day and
+	// its session is never managed. Past this age the answer is treated as unknown and re-resolved.
+	PositionMaxAge time.Duration
+
+	// PositionRefreshCooldown is the minimum gap between position reads for one vehicle, so a
+	// vehicle that cannot be resolved is asked occasionally rather than on every frame.
+	PositionRefreshCooldown time.Duration
+
 	// SustainedWindow is how far back the wake gate looks to decide the sun is reliable rather
 	// than a sunbreak. It must be longer than the poll interval, or fewer than two readings can
 	// ever fall inside it.
@@ -109,19 +119,21 @@ type ChargingOptions struct {
 // DefaultChargingOptions holds the tuned values; every one is overridable from the environment.
 func DefaultChargingOptions() ChargingOptions {
 	return ChargingOptions{
-		SystemVoltage:          240,
-		MinChargeAmps:          5,
-		MaxChargeAmps:          16,
-		LookbackWindow:         20 * time.Minute,
-		MaxSocPercent:          80,
-		OverrideSettleWindow:   3 * time.Minute,
-		VehicleStateStaleAfter: 6 * time.Hour,
-		WakeDays:               []time.Weekday{time.Friday, time.Saturday, time.Sunday},
-		MaxWakesPerDay:         2,
-		WakeCooldown:           time.Hour,
-		WakeSocHeadroom:        10,
-		SustainedWindow:        45 * time.Minute,
-		HomeRadiusM:            150,
+		SystemVoltage:           240,
+		MinChargeAmps:           5,
+		MaxChargeAmps:           16,
+		LookbackWindow:          20 * time.Minute,
+		MaxSocPercent:           80,
+		OverrideSettleWindow:    3 * time.Minute,
+		VehicleStateStaleAfter:  6 * time.Hour,
+		WakeDays:                []time.Weekday{time.Friday, time.Saturday, time.Sunday},
+		MaxWakesPerDay:          2,
+		WakeCooldown:            time.Hour,
+		WakeSocHeadroom:         10,
+		SustainedWindow:         45 * time.Minute,
+		PositionMaxAge:          3 * time.Hour,
+		PositionRefreshCooldown: 10 * time.Minute,
+		HomeRadiusM:             150,
 	}
 }
 

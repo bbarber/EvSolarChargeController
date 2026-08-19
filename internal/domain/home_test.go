@@ -12,8 +12,8 @@ import (
 func homeOptions() ChargingOptions {
 	o := DefaultChargingOptions()
 	// A house in Lincoln, NE. The gate compares in-process; only the boolean is ever stored.
-	o.HomeLatitude = 40.75
-	o.HomeLongitude = -96.65
+	o.HomeLatitude = 12.0
+	o.HomeLongitude = 34.0
 	return o
 }
 
@@ -107,8 +107,8 @@ func TestTheFoldComputesAtHome(t *testing.T) {
 		lat, lon float64
 		want     bool
 	}{
-		{"in the driveway", 40.7501, -96.6501, true},
-		{"a block away", 40.7515, -96.6520, false},
+		{"in the driveway", 12.0001, 34.0001, true},
+		{"a block away", 12.0015, 34.0020, false},
 		{"across the country", 36.16, -115.15, false},
 	}
 
@@ -132,7 +132,7 @@ func TestTheFoldComputesAtHome(t *testing.T) {
 func TestAtHomeIsSticky(t *testing.T) {
 	opts := homeOptions()
 	s := newState()
-	lat, lon := 40.7501, -96.6501
+	lat, lon := 12.0001, 34.0001
 	ApplyObservation(s, Observation{VIN: testVIN, ObservedAt: testNow, Latitude: &lat, Longitude: &lon}, opts)
 
 	got := ApplyObservation(s, Observation{VIN: testVIN, ObservedAt: testNow.Add(time.Minute)}, opts)
