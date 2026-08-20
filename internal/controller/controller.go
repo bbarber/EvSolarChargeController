@@ -30,7 +30,7 @@ type SolarReader interface {
 // no mirroring, and no Record call may ever fail the caller.
 type Recorder interface {
 	RecordStatus(ctx context.Context, v *domain.VehicleState)
-	RecordSolar(ctx context.Context, at time.Time, watts, amps float64)
+	RecordSolar(ctx context.Context, at time.Time, watts, amps float64, houseWatts *float64)
 	RecordCharge(ctx context.Context, at time.Time, vin string, amps int, watts float64)
 	RecordEvent(ctx context.Context, at time.Time, vin, kind, action, reason string)
 }
@@ -48,7 +48,7 @@ type Commander interface {
 type Store interface {
 	GetVehicleState(ctx context.Context, vin string) (*domain.VehicleState, error)
 	SaveVehicleState(ctx context.Context, v *domain.VehicleState) error
-	AddSolarReading(ctx context.Context, at time.Time, watts, amps float64) error
+	AddSolarReading(ctx context.Context, at time.Time, watts, amps float64, houseWatts *float64) error
 	MaxAmpsSince(ctx context.Context, since time.Time) (*float64, error)
 	ReadingsAboveSince(ctx context.Context, since time.Time, minAmps float64) (int, error)
 	RecordWake(ctx context.Context, vin string, at time.Time) error
@@ -265,13 +265,25 @@ func (c *Controller) Evaluate(ctx context.Context, now time.Time) error {
 			if err != nil {
 				return err
 			}
-			if err := c.store.AddSolarReading(ctx, result.Production.ReadingAt, result.Production.Watts, amps); err != nil {
+			// The consumption meter rides along in the same response, so the house load costs
+			// nothing extra against the monthly budget. It is recorded for the dashboard only —
+			// nothing below this point reads it, and charging still matches production alone.
+			//
+			// Stored exactly as reported. An earlier version "corrected" this for a CT wiring
+			// fault that does not exist; see CLAUDE.md. The meter's figure is the house load.
+			var houseWatts *float64
+			if result.Consumption != nil {
+				w := result.Consumption.Watts
+				houseWatts = &w
+			}
+
+			if err := c.store.AddSolarReading(ctx, result.Production.ReadingAt, result.Production.Watts, amps, houseWatts); err != nil {
 				return err
 			}
 			c.log.Info("solar reading recorded",
 				"watts", result.Production.Watts, "amps", amps, "at", result.Production.ReadingAt)
 			c.record(func(r Recorder) {
-				r.RecordSolar(ctx, result.Production.ReadingAt, result.Production.Watts, amps)
+				r.RecordSolar(ctx, result.Production.ReadingAt, result.Production.Watts, amps, houseWatts)
 			})
 		} else {
 			// A failed poll is not evidence of low production, so the cycle continues on whatever

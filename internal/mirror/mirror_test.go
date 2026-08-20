@@ -44,7 +44,7 @@ func TestShipsInOrderAndDeletesOnlyOnSuccess(t *testing.T) {
 	m := New(Config{URL: srv.URL, ServiceKey: "service-key"}, st, quiet())
 	ctx := context.Background()
 
-	m.RecordSolar(ctx, time.Date(2026, 8, 18, 15, 0, 0, 0, time.UTC), 2400, 10)
+	m.RecordSolar(ctx, time.Date(2026, 8, 18, 15, 0, 0, 0, time.UTC), 2400, 10, nil)
 	m.RecordEvent(ctx, time.Date(2026, 8, 18, 15, 0, 1, 0, time.UTC), "VIN1", "decision", "SetAmps", "sun")
 
 	if err := m.drain(ctx); err != nil {
@@ -76,7 +76,7 @@ func TestAFailedShipmentRetainsTheRowAndBlocksLaterOnes(t *testing.T) {
 	m := New(Config{URL: srv.URL, ServiceKey: "k"}, st, quiet())
 	ctx := context.Background()
 
-	m.RecordSolar(ctx, time.Now(), 2400, 10)
+	m.RecordSolar(ctx, time.Now(), 2400, 10, nil)
 	m.RecordEvent(ctx, time.Now(), "VIN1", "decision", "SetAmps", "sun")
 
 	if err := m.drain(ctx); err == nil {
@@ -125,6 +125,6 @@ func TestStatusPayloadCarriesTheSessionAndGates(t *testing.T) {
 func TestNilMirrorIsANoOp(t *testing.T) {
 	var m *Mirror
 	m.RecordStatus(context.Background(), domain.NewVehicleState("V", time.Now()))
-	m.RecordSolar(context.Background(), time.Now(), 1, 1)
+	m.RecordSolar(context.Background(), time.Now(), 1, 1, nil)
 	m.RecordEvent(context.Background(), time.Now(), "V", "decision", "a", "r")
 }

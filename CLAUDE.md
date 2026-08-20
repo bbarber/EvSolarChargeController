@@ -235,6 +235,30 @@ watch for it.
 two minutes earlier. A test that uses tick times for readings will pass against pruning bugs that
 production hits, because the previous reading lands exactly on the boundary and survives.
 
+**The consumption meter is fine. Do not "correct" it.** On 2026-08-20 a whole diagnosis was built
+on the idea that the consumption CTs were reversed, and it was wrong. Two mistakes drove it. First,
+reported consumption looked like a fixed ~0.55 of production across one sunny afternoon — but that
+is a coincidence of scale plus a real confound: air conditioning works hardest when the sun is
+strongest, so load genuinely correlates with production (r=+0.14 over a week of sunny intervals,
+which is weak and expected). Second, the "validation" was circular: the branch of a piecewise flip
+was chosen *because* it flattened the correlation with sunshine, and the flattened correlation was
+then cited as proof. Shipped, it drew a house line that tracked solar at r=+0.99 — the exact
+artefact it was meant to remove.
+
+Raw reported consumption passes every independent check: overnight idle 148-214 W, morning ramp,
+2080 W evening peak, 22.7 kWh/day, never negative, and it moves with the car's known draw. Its
+hourly profile is a textbook household curve. A fitted coefficient (0.583) was the tell that the
+model was wrong — genuine miswiring gives clean factors (x2, /2, a sign), never a magic number. If
+a correction is ever proposed again, it needs an *independent* anchor: the utility bill, or the
+Envoy's local per-CT readings at `/ivp/meters/readings`.
+
+**Poll `latest_telemetry`, not `summary`.** `summary` carries production only, which made house load
+look like it needed a second call and a second call is not affordable. `latest_telemetry` returns
+both meters, per CT channel, on one timestamp, for the same single call. Production is the sum of
+the production channels and equals `summary`'s `current_power` exactly — verified against the live
+system, because charging reads that number. Null-powered channels are uninstalled CTs; never count
+them.
+
 **Enphase allows 1000 calls/month.** 27/day is ~840/month. The budget guard hard-stops at 950
 *before* the request leaves the process. Failures are never retried within a run: a missed cycle is
 harmless, a retry storm is not.

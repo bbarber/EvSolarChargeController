@@ -61,7 +61,7 @@ func TestReturnsCurrentProduction(t *testing.T) {
 		switch r.URL.Path {
 		case "/oauth/token":
 			writeJSON(w, map[string]any{"access_token": "at", "refresh_token": "seed-refresh", "expires_in": 86400})
-		case "/api/v4/systems/12345/summary":
+		case "/api/v4/systems/12345/latest_telemetry":
 			if got := r.Header.Get("Authorization"); got != "Bearer at" {
 				t.Errorf("Authorization = %q, want Bearer at", got)
 			}
@@ -69,7 +69,16 @@ func TestReturnsCurrentProduction(t *testing.T) {
 			if got := r.URL.Query().Get("key"); got != "api-key" {
 				t.Errorf("key query = %q, want api-key", got)
 			}
-			writeJSON(w, map[string]any{"current_power": 3840.0, "last_report_at": reportedAt.Unix()})
+			// Shape taken from the live system: one meter per role, one row per CT channel, and an
+			// uninstalled third channel that reports null and must not be counted.
+			writeJSON(w, map[string]any{"devices": map[string]any{"meters": []map[string]any{
+				{"name": "production", "channel": 1, "power": 1920.0, "last_report_at": reportedAt.Unix()},
+				{"name": "production", "channel": 2, "power": 1920.0, "last_report_at": reportedAt.Unix()},
+				{"name": "production", "channel": 3, "power": nil, "last_report_at": nil},
+				{"name": "consumption", "channel": 1, "power": 300.0, "last_report_at": reportedAt.Unix()},
+				{"name": "consumption", "channel": 2, "power": 200.0, "last_report_at": reportedAt.Unix()},
+				{"name": "consumption", "channel": 3, "power": nil, "last_report_at": nil},
+			}}})
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
@@ -87,9 +96,44 @@ func TestReturnsCurrentProduction(t *testing.T) {
 		t.Errorf("ReadingAt = %v, want %v", got.Production.ReadingAt, reportedAt.UTC())
 	}
 
-	// Only the summary call counts; the token call is not billed against the Watt plan.
+	// Consumption rides along in the same response — that is the whole point of using
+	// latest_telemetry instead of summary, which carries no consumption field at all.
+	if got.Consumption == nil {
+		t.Fatal("expected the consumption meter to be reported")
+	}
+	if got.Consumption.Watts != 500 {
+		t.Errorf("Consumption.Watts = %v, want 500 (300+200 across channels)", got.Consumption.Watts)
+	}
+
+	// One call, not two: the house load must cost nothing extra against the Watt plan. The token
+	// call is not billed.
 	if count, _ := st.MonthlyCallCount(context.Background(), Provider, testNow); count != 1 {
 		t.Errorf("call count = %d, want 1", count)
+	}
+}
+
+// A system with no consumption CTs still polls normally; charging never reads consumption.
+func TestProductionStillWorksWithoutAConsumptionMeter(t *testing.T) {
+	c, _, _ := newHarness(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/oauth/token":
+			writeJSON(w, map[string]any{"access_token": "at", "refresh_token": "seed-refresh", "expires_in": 86400})
+		default:
+			writeJSON(w, map[string]any{"devices": map[string]any{"meters": []map[string]any{
+				{"name": "production", "channel": 1, "power": 1000.0, "last_report_at": testNow.Unix()},
+			}}})
+		}
+	})
+
+	got := c.CurrentProduction(context.Background(), testNow)
+	if !got.Success() {
+		t.Fatalf("expected success, got %+v", got)
+	}
+	if got.Production.Watts != 1000 {
+		t.Errorf("Watts = %v, want 1000", got.Production.Watts)
+	}
+	if got.Consumption != nil {
+		t.Errorf("expected no consumption, got %+v", got.Consumption)
 	}
 }
 

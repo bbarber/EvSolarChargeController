@@ -17,8 +17,9 @@ type fakeRecorder struct {
 	chargeWatts []float64
 }
 
-func (f *fakeRecorder) RecordStatus(ctx context.Context, v *domain.VehicleState)           {}
-func (f *fakeRecorder) RecordSolar(ctx context.Context, at time.Time, watts, amps float64) {}
+func (f *fakeRecorder) RecordStatus(ctx context.Context, v *domain.VehicleState) {}
+func (f *fakeRecorder) RecordSolar(ctx context.Context, at time.Time, watts, amps float64, houseWatts *float64) {
+}
 func (f *fakeRecorder) RecordEvent(ctx context.Context, at time.Time, vin, k, a, r string) {}
 func (f *fakeRecorder) RecordCharge(ctx context.Context, at time.Time, vin string, amps int, watts float64) {
 	f.charges = append(f.charges, amps)
@@ -65,7 +66,7 @@ func TestComingOnlineAfterAWakeStartsChargingImmediately(t *testing.T) {
 
 	// Sun recorded by earlier ticks.
 	for _, at := range []time.Time{now.Add(-25 * time.Minute), now.Add(-5 * time.Minute)} {
-		if err := st.AddSolarReading(ctx, at, 2160, 9); err != nil {
+		if err := st.AddSolarReading(ctx, at, 2160, 9, nil); err != nil {
 			t.Fatalf("AddSolarReading: %v", err)
 		}
 	}
@@ -103,7 +104,7 @@ func TestAPlugInEventIsActedOnImmediately(t *testing.T) {
 	c.now = func() time.Time { return now }
 
 	ctx := context.Background()
-	if err := st.AddSolarReading(ctx, now.Add(-5*time.Minute), 2160, 9); err != nil {
+	if err := st.AddSolarReading(ctx, now.Add(-5*time.Minute), 2160, 9, nil); err != nil {
 		t.Fatalf("AddSolarReading: %v", err)
 	}
 
@@ -141,7 +142,7 @@ func TestRepeatedFramesDoNotRepeatCommands(t *testing.T) {
 	c.now = func() time.Time { return now }
 
 	ctx := context.Background()
-	if err := st.AddSolarReading(ctx, now.Add(-5*time.Minute), 2160, 9); err != nil {
+	if err := st.AddSolarReading(ctx, now.Add(-5*time.Minute), 2160, 9, nil); err != nil {
 		t.Fatalf("AddSolarReading: %v", err)
 	}
 
@@ -186,7 +187,7 @@ func TestTheDrivenCarDoesNotEclipseTheChargingOne(t *testing.T) {
 	c.now = func() time.Time { return now }
 
 	ctx := context.Background()
-	if err := st.AddSolarReading(ctx, now.Add(-5*time.Minute), 2160, 9); err != nil {
+	if err := st.AddSolarReading(ctx, now.Add(-5*time.Minute), 2160, 9, nil); err != nil {
 		t.Fatalf("AddSolarReading: %v", err)
 	}
 

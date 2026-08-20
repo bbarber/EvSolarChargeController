@@ -40,9 +40,10 @@ CREATE TABLE IF NOT EXISTS vehicle_state (
 );
 
 CREATE TABLE IF NOT EXISTS solar_readings (
-    reading_at TEXT PRIMARY KEY,
-    watts      REAL NOT NULL,
-    amps       REAL NOT NULL
+    reading_at  TEXT PRIMARY KEY,
+    watts       REAL NOT NULL,
+    amps        REAL NOT NULL,
+    house_watts REAL
 );
 
 CREATE TABLE IF NOT EXISTS api_usage (
@@ -110,6 +111,9 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE vehicle_state ADD COLUMN at_home INTEGER`,
 		`ALTER TABLE vehicle_state ADD COLUMN at_home_at TEXT`,
 		`ALTER TABLE vehicle_state ADD COLUMN fast_charger INTEGER`,
+		// Nullable on purpose: readings taken before the consumption meter was read carry no
+		// house figure, and inventing one would put a fabricated line on the chart.
+		`ALTER TABLE solar_readings ADD COLUMN house_watts REAL`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			db.Close()
@@ -348,11 +352,19 @@ func boolToInt(b bool) int {
 // Solar readings
 // ---------------------------------------------------------------------------
 
-func (s *Store) AddSolarReading(ctx context.Context, at time.Time, watts, amps float64) error {
+// AddSolarReading records one production reading, and the house load alongside it when the
+// consumption meter reported. houseWatts is nil when it did not: charging never reads it, so an
+// absent figure is a gap in the chart rather than a failure.
+func (s *Store) AddSolarReading(ctx context.Context, at time.Time, watts, amps float64, houseWatts *float64) error {
+	var house any
+	if houseWatts != nil {
+		house = *houseWatts
+	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO solar_readings (reading_at, watts, amps) VALUES (?, ?, ?)
-         ON CONFLICT(reading_at) DO UPDATE SET watts = excluded.watts, amps = excluded.amps`,
-		formatTime(at), watts, amps)
+		`INSERT INTO solar_readings (reading_at, watts, amps, house_watts) VALUES (?, ?, ?, ?)
+         ON CONFLICT(reading_at) DO UPDATE SET watts = excluded.watts, amps = excluded.amps,
+             house_watts = COALESCE(excluded.house_watts, solar_readings.house_watts)`,
+		formatTime(at), watts, amps, house)
 	if err != nil {
 		return fmt.Errorf("adding solar reading: %w", err)
 	}
@@ -382,12 +394,16 @@ type SolarReading struct {
 	At    time.Time
 	Watts float64
 	Amps  float64
+
+	// HouseWatts is the recovered house load, nil for readings taken before the consumption meter
+	// was being read.
+	HouseWatts *float64
 }
 
 // AllSolarReadings returns every retained reading, oldest first.
 func (s *Store) AllSolarReadings(ctx context.Context) ([]SolarReading, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT reading_at, watts, amps FROM solar_readings ORDER BY reading_at`)
+		`SELECT reading_at, watts, amps, house_watts FROM solar_readings ORDER BY reading_at`)
 	if err != nil {
 		return nil, fmt.Errorf("reading all solar readings: %w", err)
 	}
@@ -397,8 +413,13 @@ func (s *Store) AllSolarReadings(ctx context.Context) ([]SolarReading, error) {
 	for rows.Next() {
 		var at string
 		var r SolarReading
-		if err := rows.Scan(&at, &r.Watts, &r.Amps); err != nil {
+		var house sql.NullFloat64
+		if err := rows.Scan(&at, &r.Watts, &r.Amps, &house); err != nil {
 			return nil, err
+		}
+		if house.Valid {
+			w := house.Float64
+			r.HouseWatts = &w
 		}
 		if r.At, err = time.Parse(timeLayout, at); err != nil {
 			return nil, err
