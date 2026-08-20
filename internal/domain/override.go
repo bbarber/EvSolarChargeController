@@ -58,9 +58,7 @@ func ApplyObservation(state *VehicleState, obs Observation, opts ChargingOptions
 		state.FastCharger = &v
 	}
 	if opts.HomeConfigured() && obs.Latitude != nil && obs.Longitude != nil {
-		home := withinMeters(*obs.Latitude, *obs.Longitude,
-			opts.HomeLatitude, opts.HomeLongitude, opts.HomeRadiusM)
-		state.AtHome = &home
+		ApplyPositionFix(state, *obs.Latitude, *obs.Longitude, obs.ObservedAt, opts)
 	}
 
 	effective := state.ChargingState
@@ -82,6 +80,26 @@ func ApplyObservation(state *VehicleState, obs Observation, opts ChargingOptions
 
 	state.LastUpdated = obs.ObservedAt
 	return state
+}
+
+// ApplyPositionFix folds a position into the home boolean. The coordinate is consumed here and
+// never stored: callers hand it in, the boolean and its timestamp are what survive.
+func ApplyPositionFix(state *VehicleState, lat, lon float64, at time.Time, opts ChargingOptions) {
+	if state == nil || !opts.HomeConfigured() {
+		return
+	}
+	home := withinMeters(lat, lon, opts.HomeLatitude, opts.HomeLongitude, opts.HomeRadiusM)
+	state.AtHome = &home
+	state.AtHomeAt = &at
+}
+
+// MetersFromHome is the distance used by the home gate, for logging. It exists so an operator can
+// see how a decision was reached without the position ever being recorded.
+func MetersFromHome(lat, lon float64, opts ChargingOptions) float64 {
+	const mPerDegLat = 111320.0
+	dLat := (lat - opts.HomeLatitude) * mPerDegLat
+	dLon := (lon - opts.HomeLongitude) * mPerDegLat * math.Cos(opts.HomeLatitude*math.Pi/180)
+	return math.Sqrt(dLat*dLat + dLon*dLon)
 }
 
 // withinMeters is an equirectangular distance test — ample at a 150m radius, where the error

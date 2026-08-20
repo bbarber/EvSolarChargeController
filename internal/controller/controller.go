@@ -41,6 +41,7 @@ type Commander interface {
 	StopCharging(ctx context.Context, vin string) error
 	StartCharging(ctx context.Context, vin string, amps int) error
 	Wake(ctx context.Context, vin string) error
+	Location(ctx context.Context, vin string) (lat, lon float64, err error)
 }
 
 // Store is the persistence the loop and the ingest share.
@@ -68,6 +69,11 @@ type Controller struct {
 	// invent one per call site.
 	now func() time.Time
 
+	// positionAsked is when a position read was last attempted for each VIN, enforcing the
+	// cooldown. Deliberately in memory: a restart may retry once, which costs a single read and
+	// is better than a cooldown surviving the deploy that was meant to fix position handling.
+	positionAsked map[string]time.Time
+
 	// One mutex over both paths. Telemetry and the control loop both read-modify-write the same
 	// vehicle record, and without this a frame arriving mid-evaluation could overwrite the
 	// LastSetAmps we just recorded — which would then look like a manual override.
@@ -77,7 +83,8 @@ type Controller struct {
 func New(vins []string, store Store, solar SolarReader, commands Commander, window *domain.PollingWindow,
 	opts domain.ChargingOptions, log *slog.Logger) *Controller {
 	return &Controller{vins: vins, store: store, solar: solar, commands: commands, window: window,
-		opts: opts, log: log, now: func() time.Time { return time.Now().UTC() }}
+		opts: opts, log: log, positionAsked: make(map[string]time.Time),
+		now: func() time.Time { return time.Now().UTC() }}
 }
 
 // SetRecorder attaches the dashboard mirror. Optional; nil disables mirroring.
@@ -321,6 +328,10 @@ func (c *Controller) evaluate(ctx context.Context, now time.Time) error {
 			continue // Never reported; nothing to decide about.
 		}
 
+		// Settle where the car is before asking what to do about it: the home gate can only skip
+		// while the answer is stale, and a skip looks exactly like a car that is genuinely away.
+		c.resolvePosition(ctx, vehicle, now)
+
 		decision := domain.Decide(vehicle, maxAmps, c.window.IsOpen(now), c.opts, now)
 		c.log.Info("decision", "vin", vin,
 			"action", decision.Action.String(), "reason", decision.Reason)
@@ -351,6 +362,57 @@ func (c *Controller) evaluate(ctx context.Context, now time.Time) error {
 		}
 	}
 	return nil
+}
+
+// resolvePosition asks the car where it is when the stored answer is missing or stale, and folds
+// the result into the vehicle record. Mutates vehicle in place.
+//
+// Failure is never fatal: a car that dozed off between the connectivity event and the call returns
+// HTTP 408, which is an ordinary outcome. The stale answer stands and the cooldown keeps the next
+// attempt from following immediately.
+func (c *Controller) resolvePosition(ctx context.Context, vehicle *domain.VehicleState, now time.Time) {
+	if vehicle == nil {
+		return
+	}
+
+	var lastAttempt *time.Time
+	if at, ok := c.positionAsked[vehicle.VIN]; ok {
+		lastAttempt = &at
+	}
+
+	decision := domain.DecidePositionFix(vehicle, lastAttempt, c.opts, now)
+	if !decision.Resolve {
+		c.log.Debug("position not resolved", "vin", vehicle.VIN, "reason", decision.Reason)
+		return
+	}
+
+	c.log.Info("resolving position", "vin", vehicle.VIN, "reason", decision.Reason)
+	c.positionAsked[vehicle.VIN] = now
+
+	lat, lon, err := c.commands.Location(ctx, vehicle.VIN)
+	if err != nil {
+		c.log.Warn("position read failed", "vin", vehicle.VIN, "error", err)
+		c.record(func(r Recorder) {
+			r.RecordEvent(ctx, now, vehicle.VIN, "error", "PositionReadFailed", err.Error())
+		})
+		return
+	}
+
+	domain.ApplyPositionFix(vehicle, lat, lon, now, c.opts)
+	if err := c.store.SaveVehicleState(ctx, vehicle); err != nil {
+		c.log.Error("saving the resolved position", "vin", vehicle.VIN, "error", err)
+		return
+	}
+
+	// The distance is logged; the coordinate is not, and never reaches the database.
+	atHome := vehicle.AtHome != nil && *vehicle.AtHome
+	meters := domain.MetersFromHome(lat, lon, c.opts)
+	c.log.Info("position resolved", "vin", vehicle.VIN,
+		"at_home", atHome, "meters_from_home", int(meters))
+	c.record(func(r Recorder) {
+		r.RecordEvent(ctx, now, vehicle.VIN, "decision", "PositionResolved",
+			fmt.Sprintf("%s is %dm from home; at_home=%t.", vehicle.VIN, int(meters), atHome))
+	})
 }
 
 // considerWake evaluates every wake gate and, if they all pass, wakes the car. It does not charge:

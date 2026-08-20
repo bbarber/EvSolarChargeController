@@ -107,7 +107,12 @@ type VehicleState struct {
 
 	// AtHome is whether the car's last reported position was within the home radius. Nil until a
 	// location frame has been seen. Only this boolean is stored — never the position itself.
-	AtHome *bool
+	//
+	// AtHomeAt is when that determination was made. Without it a stale answer is indistinguishable
+	// from a current one, and "away" latched from this morning's drive silently governs a car that
+	// has been sitting on the home connector for hours.
+	AtHome   *bool
+	AtHomeAt *time.Time
 
 	// FastCharger is whether a DC fast charger is attached, from FastChargerPresent. A fast-charge
 	// session is never touched, wherever it is.

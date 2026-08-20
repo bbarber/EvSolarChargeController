@@ -43,6 +43,20 @@ type fakeCommander struct {
 	starts   []int
 	wakes    []string
 	failWith error
+
+	// locations is what Location returns, and locationCalls counts the reads. Default is the
+	// home point used by tests that configure the home gate.
+	locationLat, locationLon float64
+	locationErr              error
+	locationCalls            []string
+}
+
+func (f *fakeCommander) Location(ctx context.Context, vin string) (float64, float64, error) {
+	f.locationCalls = append(f.locationCalls, vin)
+	if f.locationErr != nil {
+		return 0, 0, f.locationErr
+	}
+	return f.locationLat, f.locationLon, nil
 }
 
 func (f *fakeCommander) Wake(ctx context.Context, vin string) error {

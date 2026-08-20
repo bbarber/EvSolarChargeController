@@ -2,7 +2,10 @@
 
 Context for agents working on this repository.
 
-**This repo is public.** No OCIDs, IP addresses, tokens, or VINs belong in any tracked file. Every
+**This repo is public.** No OCIDs, IP addresses, tokens, VINs, or **coordinates near the owner's
+home** belong in any tracked file. Test fixtures use a fictional home at 12.0N 34.0E; a "realistic"
+home point in a test is a street-level disclosure of where someone lives, even rounded. This has
+already happened twice — see the note under Traps. Every
 credential lives in `.secrets/` (git-ignored), `~/.oci/`, `~/.ssh/`, or `deploy/.env` on the host.
 This file points at them; it never contains them.
 
@@ -195,6 +198,17 @@ dispatchers; a `_comment` string fails to unmarshal and panics the server on sta
 partner account was registered with. A DuckDNS name carries one A record and DuckDNS has no CNAME,
 so the public key and the telemetry endpoint must share a host — hence the nginx container.
 
+**Never put a plausible home coordinate in a test.** Two separate changes seeded fixtures by
+rounding the owner's real position; at their most precise they sat 373m from the front door, in a
+public repository. Rounding is not anonymisation. Fixtures use 12.0N 34.0E, which is open ocean and
+cannot be near anyone's house.
+
+**A stale `at_home` is not a known `at_home`.** The boolean alone cannot distinguish "away, as of
+five hours ago" from "away, right now", and the first one governed a car charging on the home
+connector all afternoon (2026-08-19). `AtHomeAt` records when the verdict was reached; past
+`PositionMaxAge` it is treated as unknown and re-resolved by asking the car. Never reintroduce a
+home verdict without its timestamp.
+
 **On-change telemetry strands `at_home`.** Signals transmit only when they change, and a parked
 car's Location never changes. A drive home through cellular dead zones drops the frames that would
 have said "home", freezing `at_home` on "away" while the car charges on the home connector — the
@@ -266,7 +280,12 @@ charging may ever depend on Supabase being reachable, and Record* calls must nev
   places: `domain.ApplyObservation` (unplug, override detection) and `controller.act` (our own
   commands). Do not add a third.
 
-- **Never poll the vehicle.** All vehicle state arrives by push.
+- **Never poll the vehicle.** All vehicle state arrives by push. The single exception is
+  `Commander.Location`, gated by `domain.DecidePositionFix`: one read, only for a car connectivity
+  already reports **online** and **plugged in** (so it cannot wake anything), only when the stored
+  home verdict is missing or older than `PositionMaxAge`, and never more often than
+  `PositionRefreshCooldown`. This is not a loosening of the rule — the rule exists so routine
+  collection cannot *wake* a car parked far from a charger.
 - **Only charge on solar.** With the sun down, a running session is stopped. Stopping short of the
   state-of-charge cap is the correct outcome, not a shortfall.
 - **The daylight window bounds the Enphase poll, not the controller's authority.** The loop ticks
