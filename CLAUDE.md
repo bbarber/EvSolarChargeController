@@ -221,14 +221,22 @@ watch for it.
 two minutes earlier. A test that uses tick times for readings will pass against pruning bugs that
 production hits, because the previous reading lands exactly on the boundary and survives.
 
-**The consumption meter is wired in the net position with the direction lost.** Reported
-"consumption" is the *magnitude* of net grid flow, so exported solar counts as though the house had
-used it — the giveaway was reported consumption tracking production at a near-constant ratio for
-hours. `domain.HouseLoadWatts` recovers the load with a per-direction sign flip. Validated over a
-week: correlation with production falls to +0.02, no negatives, weekly energy balance closes. It is
-an inference about wiring, not a measurement; if the utility bill disagrees with roughly 522 kWh
-imported a month, re-derive before trusting it. The real fix is reinstalling the CTs, after which
-that function should collapse to identity.
+**The consumption meter is fine. Do not "correct" it.** On 2026-08-20 a whole diagnosis was built
+on the idea that the consumption CTs were reversed, and it was wrong. Two mistakes drove it. First,
+reported consumption looked like a fixed ~0.55 of production across one sunny afternoon — but that
+is a coincidence of scale plus a real confound: air conditioning works hardest when the sun is
+strongest, so load genuinely correlates with production (r=+0.14 over a week of sunny intervals,
+which is weak and expected). Second, the "validation" was circular: the branch of a piecewise flip
+was chosen *because* it flattened the correlation with sunshine, and the flattened correlation was
+then cited as proof. Shipped, it drew a house line that tracked solar at r=+0.99 — the exact
+artefact it was meant to remove.
+
+Raw reported consumption passes every independent check: overnight idle 148-214 W, morning ramp,
+2080 W evening peak, 22.7 kWh/day, never negative, and it moves with the car's known draw. Its
+hourly profile is a textbook household curve. A fitted coefficient (0.583) was the tell that the
+model was wrong — genuine miswiring gives clean factors (x2, /2, a sign), never a magic number. If
+a correction is ever proposed again, it needs an *independent* anchor: the utility bill, or the
+Envoy's local per-CT readings at `/ivp/meters/readings`.
 
 **Poll `latest_telemetry`, not `summary`.** `summary` carries production only, which made house load
 look like it needed a second call and a second call is not affordable. `latest_telemetry` returns

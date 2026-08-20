@@ -261,9 +261,12 @@ func (c *Controller) Evaluate(ctx context.Context, now time.Time) error {
 			// The consumption meter rides along in the same response, so the house load costs
 			// nothing extra against the monthly budget. It is recorded for the dashboard only —
 			// nothing below this point reads it, and charging still matches production alone.
+			//
+			// Stored exactly as reported. An earlier version "corrected" this for a CT wiring
+			// fault that does not exist; see CLAUDE.md. The meter's figure is the house load.
 			var houseWatts *float64
 			if result.Consumption != nil {
-				w := domain.HouseLoadWatts(result.Consumption.Watts, result.Production.Watts)
+				w := result.Consumption.Watts
 				houseWatts = &w
 			}
 
