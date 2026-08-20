@@ -41,8 +41,15 @@ type Observation struct {
 //
 // Mutates and returns state.
 func ApplyObservation(state *VehicleState, obs Observation, opts ChargingOptions) *VehicleState {
+	wasPluggedIn := state.ChargingState.IsPluggedIn()
 	if obs.ChargingState != nil {
 		state.ChargingState = *obs.ChargingState
+	}
+	// The moment the cable goes in. Compared against AtHomeAt, this is what distinguishes "the
+	// car is away" from "the car was away when it last reported, and has since arrived".
+	if !wasPluggedIn && state.ChargingState.IsPluggedIn() {
+		at := obs.ObservedAt
+		state.PluggedInAt = &at
 	}
 	if obs.ReportedMaxAmps != nil && *obs.ReportedMaxAmps > 0 {
 		state.ReportedMaxAmps = intPtr(*obs.ReportedMaxAmps)
