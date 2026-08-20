@@ -70,7 +70,7 @@ func ptrInt(v int) *int { return &v }
 // action for a managed session is to stop rather than draw the shortfall from the grid.
 func lowSolar(t *testing.T, st *store.Store, at time.Time) {
 	t.Helper()
-	if err := st.AddSolarReading(context.Background(), at.Add(-5*time.Minute), 300, 1.25); err != nil {
+	if err := st.AddSolarReading(context.Background(), at.Add(-5*time.Minute), 300, 1.25, nil); err != nil {
 		t.Fatalf("AddSolarReading: %v", err)
 	}
 }
