@@ -78,14 +78,16 @@ func (m *Mirror) RecordStatus(ctx context.Context, v *domain.VehicleState) {
 	m.enqueue(ctx, "vehicle_status", "vin", payload)
 }
 
-// RecordSolar mirrors one production reading.
-func (m *Mirror) RecordSolar(ctx context.Context, at time.Time, watts, amps float64) {
+// RecordSolar mirrors one production reading, with the house load when it was measured.
+func (m *Mirror) RecordSolar(ctx context.Context, at time.Time, watts, amps float64, houseWatts *float64) {
 	if m == nil {
 		return
 	}
-	payload, _ := json.Marshal(map[string]any{
-		"reading_at": at.UTC(), "watts": watts, "amps": amps,
-	})
+	row := map[string]any{"reading_at": at.UTC(), "watts": watts, "amps": amps}
+	if houseWatts != nil {
+		row["house_watts"] = *houseWatts
+	}
+	payload, _ := json.Marshal(row)
 	m.enqueue(ctx, "solar_readings", "reading_at", payload)
 }
 

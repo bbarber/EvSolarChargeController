@@ -141,7 +141,7 @@ func TestLongerRetentionDoesNotChangeTheTarget(t *testing.T) {
 	chargingVehicle(t, st, start)
 
 	// An hour-old peak that is now retained but must not influence the target.
-	if err := st.AddSolarReading(ctx, start.Add(-3*time.Hour), 3840, 16); err != nil {
+	if err := st.AddSolarReading(ctx, start.Add(-3*time.Hour), 3840, 16, nil); err != nil {
 		t.Fatalf("AddSolarReading: %v", err)
 	}
 
@@ -168,7 +168,7 @@ func TestReadingsAreNeverDeleted(t *testing.T) {
 
 	// A reading from well before any window this system uses.
 	old := start.Add(-30 * 24 * time.Hour)
-	if err := st.AddSolarReading(ctx, old, 2400, 10); err != nil {
+	if err := st.AddSolarReading(ctx, old, 2400, 10, nil); err != nil {
 		t.Fatalf("AddSolarReading: %v", err)
 	}
 

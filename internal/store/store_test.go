@@ -114,7 +114,7 @@ func TestMaxAmpsSinceTakesTheWindowMaximum(t *testing.T) {
 		{now.Add(-10 * time.Minute), 9},
 	}
 	for _, r := range readings {
-		if err := s.AddSolarReading(ctx, r.at, r.amps*240, r.amps); err != nil {
+		if err := s.AddSolarReading(ctx, r.at, r.amps*240, r.amps, nil); err != nil {
 			t.Fatalf("AddSolarReading: %v", err)
 		}
 	}
@@ -134,7 +134,7 @@ func TestMaxAmpsSinceIsNilWhenTheWindowIsEmpty(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	if err := s.AddSolarReading(ctx, now.Add(-3*time.Hour), 2400, 10); err != nil {
+	if err := s.AddSolarReading(ctx, now.Add(-3*time.Hour), 2400, 10, nil); err != nil {
 		t.Fatalf("AddSolarReading: %v", err)
 	}
 
@@ -152,7 +152,7 @@ func TestPruneSolarReadingsDropsOnlyOldRows(t *testing.T) {
 	ctx := context.Background()
 
 	for _, at := range []time.Time{now.Add(-3 * time.Hour), now.Add(-2 * time.Hour), now.Add(-10 * time.Minute)} {
-		if err := s.AddSolarReading(ctx, at, 2400, 10); err != nil {
+		if err := s.AddSolarReading(ctx, at, 2400, 10, nil); err != nil {
 			t.Fatalf("AddSolarReading: %v", err)
 		}
 	}
