@@ -69,12 +69,26 @@ type Production struct {
 	ReadingAt time.Time
 }
 
-type Result struct {
-	Production *Production
-	Reason     FailureReason
-	Message    string
+// Consumption is what the consumption CTs reported, summed across channels.
+//
+// This is the meter's raw number, NOT the house load: on this installation the consumption CTs sit
+// in the net position with direction lost, so exported solar is reported as if it were consumed.
+// domain.HouseLoadWatts turns this into a load figure. Nil when the system has no consumption
+// meter, or when it reported nothing this cycle.
+type Consumption struct {
+	Watts     float64
+	ReadingAt time.Time
 }
 
+type Result struct {
+	Production  *Production
+	Consumption *Consumption
+	Reason      FailureReason
+	Message     string
+}
+
+// Success reports whether the poll yielded the production figure charging depends on. Consumption
+// is decoration: the dashboard wants it, and nothing in the charging path may ever require it.
 func (r Result) Success() bool { return r.Production != nil }
 
 func fail(reason FailureReason, format string, args ...any) Result {
@@ -137,7 +151,12 @@ func (c *Client) CurrentProduction(ctx context.Context, now time.Time) Result {
 		return fail(ReasonAuthFailed, "%v", err)
 	}
 
-	endpoint := fmt.Sprintf("%s/systems/%s/summary?key=%s",
+	// latest_telemetry rather than summary: it carries the production AND consumption meters in
+	// one response, on one timestamp, for the same single call against the monthly budget. summary
+	// has no consumption field at all, so house load used to look like it needed a second call.
+	// The production channels sum to exactly summary's current_power — verified against the live
+	// system before this switch, because charging reads this number.
+	endpoint := fmt.Sprintf("%s/systems/%s/latest_telemetry?key=%s",
 		strings.TrimRight(c.opts.BaseURL, "/"), c.opts.SystemID, url.QueryEscape(c.opts.APIKey))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -173,22 +192,50 @@ func (c *Client) CurrentProduction(ctx context.Context, now time.Time) Result {
 	}
 
 	var payload struct {
-		CurrentPower *float64 `json:"current_power"`
-		LastReportAt *int64   `json:"last_report_at"`
+		Devices struct {
+			Meters []struct {
+				Name         string   `json:"name"`
+				Channel      int      `json:"channel"`
+				Power        *float64 `json:"power"`
+				LastReportAt *int64   `json:"last_report_at"`
+			} `json:"meters"`
+		} `json:"devices"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return fail(ReasonUnexpected, "Enphase summary response was unreadable: %v", err)
-	}
-	if payload.CurrentPower == nil {
-		return fail(ReasonUnexpected, "Enphase summary response did not include current_power.")
+		return fail(ReasonUnexpected, "Enphase latest_telemetry response was unreadable: %v", err)
 	}
 
-	readingAt := now
-	if payload.LastReportAt != nil {
-		readingAt = time.Unix(*payload.LastReportAt, 0).UTC()
+	// Each meter reports per CT channel; the site figure is the sum. A channel with a null power
+	// is one that is not installed, which is normal — channel 3 is unused on a split-phase service.
+	sum := func(name string) (watts float64, at time.Time, ok bool) {
+		for _, m := range payload.Devices.Meters {
+			if m.Name != name || m.Power == nil {
+				continue
+			}
+			watts += *m.Power
+			ok = true
+			if m.LastReportAt != nil {
+				if t := time.Unix(*m.LastReportAt, 0).UTC(); t.After(at) {
+					at = t
+				}
+			}
+		}
+		if at.IsZero() {
+			at = now
+		}
+		return watts, at, ok
 	}
 
-	return Result{Production: &Production{Watts: *payload.CurrentPower, ReadingAt: readingAt}}
+	prodWatts, prodAt, ok := sum("production")
+	if !ok {
+		return fail(ReasonUnexpected, "Enphase latest_telemetry carried no production meter reading.")
+	}
+	result := Result{Production: &Production{Watts: prodWatts, ReadingAt: prodAt}}
+
+	if consWatts, consAt, ok := sum("consumption"); ok {
+		result.Consumption = &Consumption{Watts: consWatts, ReadingAt: consAt}
+	}
+	return result
 }
 
 func (c *Client) accessTokenFor(ctx context.Context, now time.Time) (string, error) {

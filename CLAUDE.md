@@ -221,6 +221,22 @@ watch for it.
 two minutes earlier. A test that uses tick times for readings will pass against pruning bugs that
 production hits, because the previous reading lands exactly on the boundary and survives.
 
+**The consumption meter is wired in the net position with the direction lost.** Reported
+"consumption" is the *magnitude* of net grid flow, so exported solar counts as though the house had
+used it — the giveaway was reported consumption tracking production at a near-constant ratio for
+hours. `domain.HouseLoadWatts` recovers the load with a per-direction sign flip. Validated over a
+week: correlation with production falls to +0.02, no negatives, weekly energy balance closes. It is
+an inference about wiring, not a measurement; if the utility bill disagrees with roughly 522 kWh
+imported a month, re-derive before trusting it. The real fix is reinstalling the CTs, after which
+that function should collapse to identity.
+
+**Poll `latest_telemetry`, not `summary`.** `summary` carries production only, which made house load
+look like it needed a second call and a second call is not affordable. `latest_telemetry` returns
+both meters, per CT channel, on one timestamp, for the same single call. Production is the sum of
+the production channels and equals `summary`'s `current_power` exactly — verified against the live
+system, because charging reads that number. Null-powered channels are uninstalled CTs; never count
+them.
+
 **Enphase allows 1000 calls/month.** 27/day is ~840/month. The budget guard hard-stops at 950
 *before* the request leaves the process. Failures are never retried within a run: a missed cycle is
 harmless, a retry storm is not.

@@ -84,7 +84,7 @@ func run() error {
 		}
 		if readings, err := db.AllSolarReadings(ctx); err == nil {
 			for _, rr := range readings {
-				dash.RecordSolar(ctx, rr.At, rr.Watts, rr.Amps)
+				dash.RecordSolar(ctx, rr.At, rr.Watts, rr.Amps, rr.HouseWatts)
 			}
 		}
 	}

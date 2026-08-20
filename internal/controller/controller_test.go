@@ -330,7 +330,7 @@ func TestWakesASleepingPluggedInCar(t *testing.T) {
 	// Two readings above the minimum, so the window is sustained rather than a sunbreak.
 	ctx := context.Background()
 	for _, at := range []time.Time{friday.Add(-15 * time.Minute), friday.Add(-5 * time.Minute)} {
-		if err := st.AddSolarReading(ctx, at, 2160, 9); err != nil {
+		if err := st.AddSolarReading(ctx, at, 2160, 9, nil); err != nil {
 			t.Fatalf("AddSolarReading: %v", err)
 		}
 	}
@@ -379,7 +379,7 @@ func TestDoesNotWakeOnADisallowedDay(t *testing.T) {
 
 	ctx := context.Background()
 	for _, at := range []time.Time{wednesday.Add(-15 * time.Minute), wednesday.Add(-5 * time.Minute)} {
-		if err := st.AddSolarReading(ctx, at, 2160, 9); err != nil {
+		if err := st.AddSolarReading(ctx, at, 2160, 9, nil); err != nil {
 			t.Fatalf("AddSolarReading: %v", err)
 		}
 	}
@@ -435,7 +435,7 @@ func TestAFailedPollDoesNotStopARunningSession(t *testing.T) {
 	chargingVehicle(t, st, testNow)
 
 	// A reading from earlier in the window is still valid.
-	if err := st.AddSolarReading(context.Background(), testNow.Add(-20*time.Minute), 2640, 11); err != nil {
+	if err := st.AddSolarReading(context.Background(), testNow.Add(-20*time.Minute), 2640, 11, nil); err != nil {
 		t.Fatalf("AddSolarReading: %v", err)
 	}
 
