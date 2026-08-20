@@ -203,6 +203,13 @@ rounding the owner's real position; at their most precise they sat 373m from the
 public repository. Rounding is not anonymisation. Fixtures use 12.0N 34.0E, which is open ocean and
 cannot be near anyone's house.
 
+**Arrival, not age, is what invalidates a position.** A car driving home sends its last Location
+frame while still moving — short of the radius — then parks and plugs in, and an on-change stream
+sends nothing further. The "away" verdict is then only minutes old, well inside `PositionMaxAge`, so
+a staleness test never fires and the session goes unmanaged. This is the ordinary path, not an edge
+case: both cars hit it the first time they were plugged in at home. `PluggedInAt` records the
+arrival and `DecidePositionFix` re-resolves whenever it postdates `AtHomeAt`.
+
 **A stale `at_home` is not a known `at_home`.** The boolean alone cannot distinguish "away, as of
 five hours ago" from "away, right now", and the first one governed a car charging on the home
 connector all afternoon (2026-08-19). `AtHomeAt` records when the verdict was reached; past

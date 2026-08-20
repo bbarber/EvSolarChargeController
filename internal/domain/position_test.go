@@ -130,3 +130,45 @@ func TestApplyPositionFixStoresOnlyTheVerdict(t *testing.T) {
 		t.Error("expected a point 5km away to read as away")
 	}
 }
+
+// The real failure, 2026-08-20: a car drove home, sent its last Location frame 80 seconds before
+// joining the home wifi — still short of the radius — then parked and plugged in. Location
+// transmits on change, so a parked car sends nothing further and the "away" verdict stands. It was
+// minutes old, far inside PositionMaxAge, so the staleness gate never fired and the session went
+// unmanaged. Arrival, not age, is the signal.
+func TestResolvesWhenTheCarPluggedInAfterItsLastPositionFix(t *testing.T) {
+	v := posReady()
+	fixed := posNow.Add(-6 * time.Minute) // in transit, judged away
+	plugged := posNow.Add(-4 * time.Minute)
+	v.AtHomeAt, v.PluggedInAt = &fixed, &plugged
+
+	d := DecidePositionFix(v, nil, posOptions(), posNow)
+	if !d.Resolve {
+		t.Errorf("expected a resolve for a car that plugged in after its position was fixed: %s", d.Reason)
+	}
+}
+
+// A car sitting plugged in since before its last position fix has nothing new to say.
+func TestDoesNotResolveWhenThePositionPostdatesThePlugIn(t *testing.T) {
+	v := posReady()
+	plugged := posNow.Add(-2 * time.Hour)
+	fixed := posNow.Add(-30 * time.Minute) // reported after it was already parked
+	v.AtHomeAt, v.PluggedInAt = &fixed, &plugged
+
+	if d := DecidePositionFix(v, nil, posOptions(), posNow); d.Resolve {
+		t.Errorf("expected no resolve; the position already describes where it is parked: %s", d.Reason)
+	}
+}
+
+// Arrival still does not override the gates that protect the car itself.
+func TestArrivalDoesNotOverrideTheOnlineGate(t *testing.T) {
+	offline := false
+	v := posReady()
+	fixed := posNow.Add(-6 * time.Minute)
+	plugged := posNow.Add(-4 * time.Minute)
+	v.AtHomeAt, v.PluggedInAt, v.Online = &fixed, &plugged, &offline
+
+	if d := DecidePositionFix(v, nil, posOptions(), posNow); d.Resolve {
+		t.Errorf("expected no resolve for a sleeping car: %s", d.Reason)
+	}
+}

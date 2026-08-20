@@ -114,6 +114,11 @@ type VehicleState struct {
 	AtHome   *bool
 	AtHomeAt *time.Time
 
+	// PluggedInAt is when the cable was last connected. Plugging in is an arrival: it is the one
+	// moment that says a car has finished moving and is sitting at a connector, which is exactly
+	// what the home gate needs to know and what an on-change position stream cannot tell it.
+	PluggedInAt *time.Time
+
 	// FastCharger is whether a DC fast charger is attached, from FastChargerPresent. A fast-charge
 	// session is never touched, wherever it is.
 	FastCharger *bool

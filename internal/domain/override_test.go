@@ -199,3 +199,26 @@ func TestAFullSessionRunsOverrideThenReset(t *testing.T) {
 		t.Errorf("expected a reset on unplug, got %+v", s)
 	}
 }
+
+// Plugging in is recorded so the home gate can tell "away" from "was away, and has since arrived".
+func TestPlugInIsTimestamped(t *testing.T) {
+	opts := DefaultChargingOptions()
+	at := time.Date(2026, 8, 20, 21, 56, 0, 0, time.UTC)
+
+	v := NewVehicleState("VIN1", at)
+	v.ChargingState = StateDisconnected
+
+	charging := StateCharging
+	ApplyObservation(v, Observation{VIN: "VIN1", ObservedAt: at, ChargingState: &charging}, opts)
+	if v.PluggedInAt == nil || !v.PluggedInAt.Equal(at) {
+		t.Fatalf("PluggedInAt = %v, want %v", v.PluggedInAt, at)
+	}
+
+	// Still plugged in a frame later: the original arrival time must survive.
+	later := at.Add(5 * time.Minute)
+	stopped := StateStopped
+	ApplyObservation(v, Observation{VIN: "VIN1", ObservedAt: later, ChargingState: &stopped}, opts)
+	if !v.PluggedInAt.Equal(at) {
+		t.Errorf("PluggedInAt moved to %v; it should still be the moment of arrival %v", v.PluggedInAt, at)
+	}
+}

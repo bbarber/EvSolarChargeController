@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS vehicle_state (
     online_at                TEXT,
     at_home                  INTEGER,
     at_home_at               TEXT,
+    plugged_in_at            TEXT,
     fast_charger             INTEGER
 );
 
@@ -110,6 +111,7 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE vehicle_state ADD COLUMN session_since TEXT`,
 		`ALTER TABLE vehicle_state ADD COLUMN at_home INTEGER`,
 		`ALTER TABLE vehicle_state ADD COLUMN at_home_at TEXT`,
+		`ALTER TABLE vehicle_state ADD COLUMN plugged_in_at TEXT`,
 		`ALTER TABLE vehicle_state ADD COLUMN fast_charger INTEGER`,
 		// Nullable on purpose: readings taken before the consumption meter was read carry no
 		// house figure, and inventing one would put a fabricated line on the chart.
@@ -216,7 +218,7 @@ func intFrom(v sql.NullInt64) *int {
 
 const vehicleColumns = `vin, charge_amps, reported_max_amps, battery_level_percent,
     charging_state, session, session_since, last_set_amps, last_set_at, last_updated,
-    online, online_at, last_wake_at, at_home, at_home_at, fast_charger`
+    online, online_at, last_wake_at, at_home, at_home_at, plugged_in_at, fast_charger`
 
 // GetVehicleState returns nil (with no error) when the VIN has never reported.
 func (s *Store) GetVehicleState(ctx context.Context, vin string) (*domain.VehicleState, error) {
@@ -251,12 +253,13 @@ func scanVehicleState(row scanner) (*domain.VehicleState, error) {
 		lastWakeAt    sql.NullString
 		atHome        sql.NullInt64
 		atHomeAt      sql.NullString
+		pluggedInAt   sql.NullString
 		fastCharger   sql.NullInt64
 	)
 
 	if err := row.Scan(&v.VIN, &chargeAmps, &reportedMax, &batteryLevel,
 		&chargingState, &session, &sessionSince, &lastSetAmps, &lastSetAt, &lastUpdated,
-		&online, &onlineAt, &lastWakeAt, &atHome, &atHomeAt, &fastCharger); err != nil {
+		&online, &onlineAt, &lastWakeAt, &atHome, &atHomeAt, &pluggedInAt, &fastCharger); err != nil {
 		return nil, err
 	}
 
@@ -296,6 +299,9 @@ func scanVehicleState(row scanner) (*domain.VehicleState, error) {
 	if v.AtHomeAt, err = parseTime(atHomeAt); err != nil {
 		return nil, err
 	}
+	if v.PluggedInAt, err = parseTime(pluggedInAt); err != nil {
+		return nil, err
+	}
 	if v.LastUpdated, err = time.Parse(timeLayout, lastUpdated); err != nil {
 		return nil, fmt.Errorf("parsing last_updated %q: %w", lastUpdated, err)
 	}
@@ -306,7 +312,7 @@ func scanVehicleState(row scanner) (*domain.VehicleState, error) {
 func (s *Store) SaveVehicleState(ctx context.Context, v *domain.VehicleState) error {
 	_, err := s.db.ExecContext(ctx, `
         INSERT INTO vehicle_state (`+vehicleColumns+`)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(vin) DO UPDATE SET
             charge_amps           = excluded.charge_amps,
             reported_max_amps     = excluded.reported_max_amps,
@@ -322,12 +328,13 @@ func (s *Store) SaveVehicleState(ctx context.Context, v *domain.VehicleState) er
             last_wake_at          = excluded.last_wake_at,
             at_home               = excluded.at_home,
             at_home_at            = excluded.at_home_at,
+            plugged_in_at         = excluded.plugged_in_at,
             fast_charger          = excluded.fast_charger`,
 		v.VIN, nullInt(v.ChargeAmps), nullInt(v.ReportedMaxAmps), nullInt(v.BatteryLevelPercent),
 		v.ChargingState.String(), v.Session.String(), nullTime(v.SessionSince),
 		nullInt(v.LastSetAmps), nullTime(v.LastSetAt), formatTime(v.LastUpdated),
 		nullBool(v.Online), nullTime(v.OnlineAt), nullTime(v.LastWakeAt),
-		nullBool(v.AtHome), nullTime(v.AtHomeAt), nullBool(v.FastCharger))
+		nullBool(v.AtHome), nullTime(v.AtHomeAt), nullTime(v.PluggedInAt), nullBool(v.FastCharger))
 	if err != nil {
 		return fmt.Errorf("saving vehicle state for %s: %w", v.VIN, err)
 	}

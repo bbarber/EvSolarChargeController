@@ -59,6 +59,18 @@ func DecidePositionFix(state *VehicleState, lastAttempt *time.Time, opts Chargin
 		return PositionDecision{Resolve: true, Reason: fmt.Sprintf(
 			"%s has never reported a position and is plugged in; resolving it.", state.VIN)}
 	}
+
+	// Plugged in since the position was determined, so the position predates the arrival.
+	//
+	// This is the ordinary case, not an edge case: Location transmits on change, a car that drives
+	// home sends its last frame while still moving, and a parked car never sends another. The
+	// verdict is then minutes old — far inside PositionMaxAge — and wrong, so an age test alone
+	// never fires. Both cars hit this the first time they were plugged in at home.
+	if state.PluggedInAt != nil && state.AtHomeAt != nil && state.PluggedInAt.After(*state.AtHomeAt) {
+		return PositionDecision{Resolve: true, Reason: fmt.Sprintf(
+			"%s plugged in %s after its position was determined; resolving where it arrived.",
+			state.VIN, state.PluggedInAt.Sub(*state.AtHomeAt).Round(time.Second))}
+	}
 	if state.AtHomeAt == nil {
 		return PositionDecision{Resolve: true, Reason: fmt.Sprintf(
 			"%s has a position of unknown age; resolving it.", state.VIN)}
