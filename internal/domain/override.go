@@ -33,6 +33,10 @@ type Observation struct {
 
 	// FastCharger is FastChargerPresent (39).
 	FastCharger *bool
+
+	// RatedRange is RatedRange (32), in the car's own display unit. Nothing decides on it; it is
+	// recorded so the dashboard can report the range a day's charging added.
+	RatedRange *float64
 }
 
 // ApplyObservation folds a telemetry frame into the stored state and applies the manual-override

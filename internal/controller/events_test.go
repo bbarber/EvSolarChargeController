@@ -18,6 +18,9 @@ type fakeRecorder struct {
 }
 
 func (f *fakeRecorder) RecordStatus(ctx context.Context, v *domain.VehicleState) {}
+func (f *fakeRecorder) RecordRange(ctx context.Context, at time.Time, vin string, miles float64) {
+}
+
 func (f *fakeRecorder) RecordSolar(ctx context.Context, at time.Time, watts, amps float64, houseWatts *float64) {
 }
 func (f *fakeRecorder) RecordEvent(ctx context.Context, at time.Time, vin, k, a, r string) {}

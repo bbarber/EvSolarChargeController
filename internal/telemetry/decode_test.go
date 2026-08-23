@@ -221,3 +221,23 @@ func TestDecodeBytesRejectsGarbage(t *testing.T) {
 		t.Error("expected an error for a malformed payload")
 	}
 }
+
+// Rated range drives the "range added today" figure, so its fractional part matters: it climbs in
+// tenths while charging, and rounding every sample would lose most of a slow hour's gain.
+func TestDecodeKeepsRatedRangeFraction(t *testing.T) {
+	payload := payloadWith(&protos.Datum{
+		Key:   protos.Field_RatedRange,
+		Value: &protos.Value{Value: &protos.Value_FloatValue{FloatValue: 214.6}},
+	})
+
+	obs, err := Decode(payload, testNow)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if obs.RatedRange == nil {
+		t.Fatal("expected a rated range")
+	}
+	if got := *obs.RatedRange; got < 214.5 || got > 214.7 {
+		t.Errorf("RatedRange = %v, want 214.6", got)
+	}
+}

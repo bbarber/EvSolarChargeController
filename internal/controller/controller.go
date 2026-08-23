@@ -32,6 +32,7 @@ type Recorder interface {
 	RecordStatus(ctx context.Context, v *domain.VehicleState)
 	RecordSolar(ctx context.Context, at time.Time, watts, amps float64, houseWatts *float64)
 	RecordCharge(ctx context.Context, at time.Time, vin string, amps int, watts float64)
+	RecordRange(ctx context.Context, at time.Time, vin string, miles float64)
 	RecordEvent(ctx context.Context, at time.Time, vin, kind, action, reason string)
 }
 
@@ -209,6 +210,12 @@ func (c *Controller) HandleTelemetry(ctx context.Context, raw []byte) error {
 			draw = *state.ChargeAmps
 		}
 		r.RecordCharge(ctx, obs.ObservedAt, obs.VIN, draw, float64(draw)*c.opts.SystemVoltage)
+
+		// Only when the car sent one. Range transmits on change, so a parked car contributes
+		// nothing and a charging one contributes a rising series.
+		if obs.RatedRange != nil {
+			r.RecordRange(ctx, obs.ObservedAt, obs.VIN, *obs.RatedRange)
+		}
 	})
 
 	// Evaluate on the event. A plug-in acts within seconds instead of waiting out the tick, and a

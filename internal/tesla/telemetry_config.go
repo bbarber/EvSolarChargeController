@@ -41,7 +41,8 @@ var TelemetryFields = map[string]FieldConfig{
 	"BatteryLevel":            {IntervalSeconds: 300},                             // drives the state-of-charge cap
 	"Soc":                     {IntervalSeconds: 300},                             // some firmware reports SoC here instead
 	"Location":                {IntervalSeconds: 600, ResendIntervalSeconds: 600}, // the at-home gate; coarse on purpose, never stored raw
-	"FastChargerPresent":      {IntervalSeconds: 60},                              // a DC session is never touched, wherever it is
+	"FastChargerPresent":      {IntervalSeconds: 60},
+	"RatedRange":              {IntervalSeconds: 60}, // range added per day; climbs ~1 mi/min charging                              // a DC session is never touched, wherever it is
 }
 
 // RegisterTelemetry points the given vehicles at a fleet-telemetry server.
