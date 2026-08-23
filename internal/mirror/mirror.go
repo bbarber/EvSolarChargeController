@@ -104,6 +104,18 @@ func (m *Mirror) RecordCharge(ctx context.Context, at time.Time, vin string, amp
 	m.enqueue(ctx, "charge_readings", "vin,reading_at", payload)
 }
 
+// RecordRange mirrors the car's rated range, from which the dashboard derives the range a day's
+// charging added. Stored in the car's own display unit, exactly as reported.
+func (m *Mirror) RecordRange(ctx context.Context, at time.Time, vin string, miles float64) {
+	if m == nil {
+		return
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"vin": vin, "reading_at": at.UTC(), "miles": miles,
+	})
+	m.enqueue(ctx, "range_readings", "vin,reading_at", payload)
+}
+
 // RecordEvent mirrors one interesting moment: a decision, a connectivity change, a wake, a
 // command, an error.
 func (m *Mirror) RecordEvent(ctx context.Context, at time.Time, vin, kind, action, reason string) {

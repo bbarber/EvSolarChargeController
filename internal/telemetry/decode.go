@@ -77,6 +77,13 @@ func Decode(payload *protos.Payload, fallbackNow time.Time) (domain.Observation,
 				obs.Latitude, obs.Longitude = &lat, &lon
 			}
 
+		case protos.Field_RatedRange:
+			// Whatever unit the car displays. Recorded as reported and never converted: a guess at
+			// miles-versus-kilometres would be invisible in the number and wrong by 1.6x.
+			if v, ok := floatValue(datum.Value); ok {
+				obs.RatedRange = &v
+			}
+
 		case protos.Field_FastChargerPresent:
 			if b, ok := datum.Value.Value.(*protos.Value_BooleanValue); ok {
 				v := b.BooleanValue
@@ -112,6 +119,26 @@ func DecodeBytes(raw []byte, fallbackNow time.Time) (domain.Observation, error) 
 // numericValue accepts whichever numeric variant the firmware happened to send. Tesla has shipped
 // these fields as int, long, float, double and even string across versions, so pinning to one
 // variant would silently drop data after a car update.
+// floatValue keeps the fractional part, which numericValue rounds away. Range moves in tenths
+// while charging, and rounding each sample would lose most of a slow hour's gain.
+func floatValue(v *protos.Value) (float64, bool) {
+	switch typed := v.Value.(type) {
+	case *protos.Value_IntValue:
+		return float64(typed.IntValue), true
+	case *protos.Value_LongValue:
+		return float64(typed.LongValue), true
+	case *protos.Value_FloatValue:
+		return float64(typed.FloatValue), true
+	case *protos.Value_DoubleValue:
+		return typed.DoubleValue, true
+	case *protos.Value_StringValue:
+		if parsed, err := strconv.ParseFloat(typed.StringValue, 64); err == nil {
+			return parsed, true
+		}
+	}
+	return 0, false
+}
+
 func numericValue(v *protos.Value) (int, bool) {
 	switch typed := v.Value.(type) {
 	case *protos.Value_IntValue:
