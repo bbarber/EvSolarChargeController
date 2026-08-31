@@ -287,6 +287,13 @@ charging may ever depend on Supabase being reachable, and Record* calls must nev
   places: `domain.ApplyObservation` (unplug, override detection) and `controller.act` (our own
   commands). Do not add a third.
 
+- **The dashboard can withhold commands, and only that.** `internal/pause` polls a single
+  Supabase row *outbound* on a 30s timer; nothing listens on the VM, no port is opened, no webhook
+  exists. Whoever holds the dashboard can stop the system touching the car — they cannot start a
+  session, raise a current, or reach the box. The pause is stored as an **instant**, not a flag, so
+  it lapses on its own and a VM that was down over midnight comes back willing to charge. A failed
+  read never pauses and never un-pauses: the last known state stands. Every command path is gated
+  in `controller.commandsWithheld`; a new one must go inside that switch, not beside it.
 - **Never poll the vehicle.** All vehicle state arrives by push. The single exception is
   `Commander.Location`, gated by `domain.DecidePositionFix`: one read, only for a car connectivity
   already reports **online** and **plugged in** (so it cannot wake anything), only when the stored

@@ -45,6 +45,13 @@ type Commander interface {
 	Location(ctx context.Context, vin string) (lat, lon float64, err error)
 }
 
+// Pauser reports whether the dashboard's pause switch is currently holding commands back. A nil
+// Pauser never pauses, so a deployment without the dashboard behaves as it always did.
+type Pauser interface {
+	Paused(now time.Time) bool
+	Until() *time.Time
+}
+
 // Store is the persistence the loop and the ingest share.
 type Store interface {
 	GetVehicleState(ctx context.Context, vin string) (*domain.VehicleState, error)
@@ -70,6 +77,10 @@ type Controller struct {
 	// invent one per call site.
 	now func() time.Time
 
+	// pause is the dashboard's switch. Consulted immediately before every command, never cached
+	// across a decision, so releasing it takes effect on the next event rather than the next tick.
+	pause Pauser
+
 	// positionAsked is when a position read was last attempted for each VIN, enforcing the
 	// cooldown. Deliberately in memory: a restart may retry once, which costs a single read and
 	// is better than a cooldown surviving the deploy that was meant to fix position handling.
@@ -86,6 +97,32 @@ func New(vins []string, store Store, solar SolarReader, commands Commander, wind
 	return &Controller{vins: vins, store: store, solar: solar, commands: commands, window: window,
 		opts: opts, log: log, positionAsked: make(map[string]time.Time),
 		now: func() time.Time { return time.Now().UTC() }}
+}
+
+// SetPauser installs the dashboard's pause switch. Optional: without one, nothing is ever
+// withheld.
+func (c *Controller) SetPauser(p Pauser) { c.pause = p }
+
+// commandsWithheld reports whether the pause switch is on, and records why exactly once per
+// occurrence so the dashboard shows a reason rather than an unexplained silence.
+//
+// Deliberately checked here rather than inside the Commander: a decision that was going to command
+// still gets computed and logged, so the event feed reads "it wanted to do X, and did not because
+// you paused it" instead of going quiet.
+func (c *Controller) commandsWithheld(ctx context.Context, vin string, action string, now time.Time) bool {
+	if c.pause == nil || !c.pause.Paused(now) {
+		return false
+	}
+	reason := fmt.Sprintf("%s is paused from the dashboard; withholding %s.", vin, action)
+	if until := c.pause.Until(); until != nil {
+		reason = fmt.Sprintf("%s is paused from the dashboard until %s; withholding %s.",
+			vin, c.window.ToLocal(*until).Format("3:04 PM"), action)
+	}
+	c.log.Info("command withheld", "vin", vin, "action", action, "reason", reason)
+	c.record(func(r Recorder) {
+		r.RecordEvent(ctx, now, vin, "decision", "PausedByUser", reason)
+	})
+	return true
 }
 
 // SetRecorder attaches the dashboard mirror. Optional; nil disables mirroring.
@@ -456,6 +493,10 @@ func (c *Controller) considerWake(ctx context.Context, vehicle *domain.VehicleSt
 		return nil
 	}
 
+	if c.commandsWithheld(ctx, vehicle.VIN, "Wake", now) {
+		return nil
+	}
+
 	c.log.Info("waking the vehicle", "vin", vehicle.VIN, "reason", d.Reason,
 		"wakes_today", wakesToday, "limit", c.opts.MaxWakesPerDay)
 
@@ -476,6 +517,14 @@ func (c *Controller) considerWake(ctx context.Context, vehicle *domain.VehicleSt
 func (c *Controller) act(ctx context.Context, vehicle *domain.VehicleState, d domain.Decision, now time.Time) error {
 	if vehicle == nil {
 		return nil // Nothing to command and nothing to record.
+	}
+
+	// One gate in front of every command this function can issue. New command paths must be added
+	// inside this switch, not beside it.
+	if d.ShouldSend() || d.ShouldResume() || d.ShouldStart() || d.ShouldStop() {
+		if c.commandsWithheld(ctx, vehicle.VIN, d.Action.String(), now) {
+			return nil
+		}
 	}
 
 	switch {
