@@ -23,6 +23,7 @@ import (
 	"github.com/bbarber/EvSolarChargeController/internal/domain"
 	"github.com/bbarber/EvSolarChargeController/internal/enphase"
 	"github.com/bbarber/EvSolarChargeController/internal/mirror"
+	"github.com/bbarber/EvSolarChargeController/internal/pause"
 	"github.com/bbarber/EvSolarChargeController/internal/store"
 	"github.com/bbarber/EvSolarChargeController/internal/telemetry"
 	"github.com/bbarber/EvSolarChargeController/internal/tesla"
@@ -70,6 +71,13 @@ func run() error {
 
 	ctrl := controller.New(cfg.VINs, db, solar, commander, window, cfg.Charging, log.With("component", "controller"))
 
+	// The pause switch is read from the same place the mirror writes to, over the same outbound
+	// connection. Nothing listens on this box.
+	pauseSwitch := pause.New(cfg.SupabaseURL, cfg.SupabaseServiceKey, log.With("component", "pause"))
+	if pauseSwitch != nil {
+		ctrl.SetPauser(pauseSwitch)
+	}
+
 	mirrorCfg := mirror.Config{URL: cfg.SupabaseURL, ServiceKey: cfg.SupabaseServiceKey}
 	var dash *mirror.Mirror
 	if mirrorCfg.Enabled() {
@@ -104,6 +112,7 @@ func run() error {
 		"enphase_budget", cfg.Enphase.MonthlyCallBudget,
 		"command_key", commander.KeyFingerprint(),
 		"mirror", mirrorCfg.Enabled(),
+		"pause_switch", pauseSwitch != nil,
 		"database", cfg.DatabasePath)
 
 	var wg sync.WaitGroup
@@ -133,6 +142,14 @@ func run() error {
 		go func() {
 			defer wg.Done()
 			dash.Run(ctx) // outbox shipper; outages cost freshness, never charging
+		}()
+	}
+
+	if pauseSwitch != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pauseSwitch.Run(ctx) // polls outbound; a failed read leaves the last state standing
 		}()
 	}
 
