@@ -20,7 +20,7 @@ __queuestorage__/
 *.pem
 # The Tesla third-party *public* key is meant to be served publicly. Narrowly re-allowed here so
 # that a stray copy of the private key elsewhere in the tree still cannot be committed.
-!site/.well-known/appspecific/com.tesla.3p.public-key.pem
+!deploy/public-key/site/.well-known/appspecific/com.tesla.3p.public-key.pem
 *.pfx
 *.p12
 .env
