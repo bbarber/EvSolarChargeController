@@ -17,16 +17,20 @@ Legend: 🧑 needs a human (browser login, phone, or the vehicle) · 🤖 script
 
 ### 0a. 🧑 DuckDNS hostnames
 
-Two are needed. A DuckDNS name carries one A record, and the two endpoints live at different
-addresses.
+One is needed. Tesla requires the telemetry hostname to sit under the partner-registered domain,
+and DuckDNS has no CNAME, so the public key and the telemetry endpoint share one name on the VM:
 
 | Hostname | A record points at | Serves |
 |---|---|---|
-| `evsolarchargecontroller.duckdns.org` | `185.199.108.153` (GitHub Pages) | the Tesla public key |
-| `<something>-tel.duckdns.org` | the VM's public IP | fleet-telemetry, TCP 8443 |
+| `evsolarchargecontroller.duckdns.org` | the VM's public IP | public key (nginx, 443) and fleet-telemetry (8443) |
 
-The second one's A record can't be set until the VM exists (step 8), so create the name now and
-leave it pointing anywhere.
+> History: this originally used two names, the key on GitHub Pages and telemetry on
+> `<something>-tel`. Tesla rejected that split ("hostname domain does not match with partner
+> account"). The Pages workflow and the `-tel` name are leftovers; see
+> [OPERATIONS.md](OPERATIONS.md#leftovers-that-are-harmless).
+
+The A record can't be set until the VM exists (step 8), so create the name now and leave it
+pointing anywhere.
 
 Save the account token — one token covers all your domains:
 
@@ -172,7 +176,8 @@ Then point the telemetry DuckDNS name at the `public_ip` output.
 
 ## 9. 🤖 Issue the telemetry certificate
 
-Issue it on the VM, over DNS-01 — nothing answers HTTP on that hostname, since it is a raw TLS
+`ACME_EMAIL` and `TELEMETRY_HOSTNAME` below are plain shell values you set for the session, not
+stored configuration. Issue it on the VM, over DNS-01 — nothing answers HTTP on that hostname, since it is a raw TLS
 listener on 8443. Copy `deploy/cert-renewal/` to `/opt/evsolar/cert-renewal/` (owned by root), then
 pipe the DuckDNS token in over SSH so it never lands in a file you wrote:
 
@@ -251,7 +256,8 @@ docker compose exec controller sqlite3 /var/lib/evsolar/evsolar.db \
 | Enphase refresh token | automatic, per use | written to SQLite by the controller |
 | Tesla refresh token | automatic, per use | written to SQLite by the controller |
 | Enphase client secret | if compromised | regenerate in the portal, update `.env`, restart |
-| Telemetry TLS certificate | before expiry | the weekly workflow; or re-run it manually |
+| Telemetry TLS certificate | automatic, ~30 days before expiry | timer on the VM; see [OPERATIONS.md](OPERATIONS.md) |
+| DuckDNS token | if regenerated | re-run step 9, which updates certbot's stored copy |
 | Command key | only if compromised | regenerate, republish the public key, **re-pair both cars** |
 
 The `evsolar-data` volume holds both rotating refresh tokens. Losing it means re-authorizing
@@ -272,6 +278,10 @@ than the one being compared, or clamping the request. Compare `ChargeAmps` again
 
 **Commands return success but nothing changes.** Confirm the key fingerprint in the startup log
 matches the key paired to the car, and that the virtual key is still present in the Tesla app.
+
+**No telemetry arrives, and fleet-telemetry logs `remote error: tls: bad certificate`.** The cars
+are rejecting our certificate, usually because it expired. See
+[OPERATIONS.md](OPERATIONS.md#telemetry-stopped-arriving).
 
 **No telemetry arrives.** Confirm the endpoint completes a TLS handshake from outside:
 `openssl s_client -connect "$TELEMETRY_HOSTNAME:8443"`. Both the VCN security list *and* the

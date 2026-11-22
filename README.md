@@ -247,6 +247,9 @@ A daily systemd timer on the VM (`deploy/cert-renewal`) renews the Let's Encrypt
 DNS-01 and restarts only fleet-telemetry and nginx, so the controller keeps its state. The
 `Check telemetry certificate` workflow watches expiry from outside and fails if renewal stalls.
 
+Day-to-day running needs no maintenance. What runs unattended, which alerts can reach you, and what
+to do about each is in [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
 The one-time Tesla and Enphase account setup — key generation, virtual-key pairing, OAuth
 authorization, telemetry registration — cannot be expressed as infrastructure and is documented
 step by step in [docs/SETUP.md](docs/SETUP.md).
