@@ -229,7 +229,8 @@ sticks again, first check the registered config with `evsolar-register -status`.
 fleet-telemetry log, nothing in the controller's). The old GitHub renewal workflow had never once
 succeeded — a missing secret, a stale Azure hostname — and nobody saw it fail. Renewal is now
 `evsolar-cert-renew.timer` on the host (`deploy/cert-renewal`); `journalctl -u evsolar-cert-renew`
-shows each run, and the **Check telemetry certificate** workflow alarms from outside under 21 days.
+shows each run, and the **Check telemetry certificate** workflow alarms from outside when under a quarter of the lifetime remains, and re-enables its own
+schedule each run so repository inactivity cannot switch it off.
 The cars accept a new leaf without re-registering because the registered CA chain reaches ISRG
 Root YE; if Let's Encrypt moves ECDSA issuance to a different root, re-run `evsolar-register`.
 
