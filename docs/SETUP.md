@@ -172,12 +172,26 @@ Then point the telemetry DuckDNS name at the `public_ip` output.
 
 ## 9. 🤖 Issue the telemetry certificate
 
-Set the repository variables `TELEMETRY_HOSTNAME`, `ACME_EMAIL`, `TELEMETRY_SSH_USER` (default
-`ubuntu`) and `TELEMETRY_DEPLOY_DIR` (default `/opt/evsolar`), and the secrets `DUCKDNS_TOKEN` and
-`TELEMETRY_SSH_KEY`. Then run the **Renew telemetry certificate** workflow.
+Issue it on the VM, over DNS-01 — nothing answers HTTP on that hostname, since it is a raw TLS
+listener on 8443. Copy `deploy/cert-renewal/` to `/opt/evsolar/cert-renewal/` (owned by root), then
+pipe the DuckDNS token in over SSH so it never lands in a file you wrote:
 
-It issues over DNS-01 — nothing answers HTTP on that hostname, since it is a raw TLS listener on
-8443 — copies the certificate to the host, and restarts only the telemetry container.
+```bash
+sudo docker build -q -t evsolar-certbot:local /opt/evsolar/cert-renewal
+sudo mkdir -p /opt/evsolar/letsencrypt && sudo chmod 700 /opt/evsolar/letsencrypt
+read -rs T; sudo docker run --rm -v /opt/evsolar/letsencrypt:/le evsolar-certbot:local certonly \
+  --non-interactive --agree-tos --email "$ACME_EMAIL" \
+  --preferred-challenges dns --authenticator dns-duckdns --dns-duckdns-token "$T" \
+  --dns-duckdns-propagation-seconds 60 \
+  --config-dir /le/config --work-dir /le/work --logs-dir /le/logs \
+  --cert-name telemetry -d "$TELEMETRY_HOSTNAME"
+sudo /opt/evsolar/cert-renewal/install.sh    # enables the daily renewal timer
+sudo systemctl start evsolar-cert-renew      # installs the certificate into fleet-telemetry/
+```
+
+certbot keeps the token in its renewal config under `/opt/evsolar/letsencrypt` (root-only), so
+renewal needs nothing further. Set the `production` environment variable `TELEMETRY_HOSTNAME` so
+the **Check telemetry certificate** workflow can watch expiry from outside.
 
 ## 10. 🤖 Deploy
 

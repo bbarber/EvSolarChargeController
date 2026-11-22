@@ -243,8 +243,9 @@ sudo mkdir -p /opt/evsolar && cd /opt/evsolar
 docker compose up -d
 ```
 
-The `Renew telemetry certificate` workflow reissues the Let's Encrypt certificate weekly over
-DNS-01 and restarts only the telemetry container, so the controller keeps its state.
+A daily systemd timer on the VM (`deploy/cert-renewal`) renews the Let's Encrypt certificate over
+DNS-01 and restarts only fleet-telemetry and nginx, so the controller keeps its state. The
+`Check telemetry certificate` workflow watches expiry from outside and fails if renewal stalls.
 
 The one-time Tesla and Enphase account setup — key generation, virtual-key pairing, OAuth
 authorization, telemetry registration — cannot be expressed as infrastructure and is documented

@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew the fleet-telemetry TLS certificate
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/evsolar/cert-renewal/renew-cert.sh

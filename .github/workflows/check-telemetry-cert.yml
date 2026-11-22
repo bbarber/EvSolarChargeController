@@ -1,0 +1,49 @@
+name: Check telemetry certificate
+
+# An outside-in check on the certificate the cars actually see. Renewal itself runs on the VM
+# (deploy/cert-renewal, a daily systemd timer); this workflow holds no secrets and touches nothing.
+# It exists because a renewal that fails quietly is invisible until the cars refuse the handshake,
+# and then telemetry simply stops — which is how the 2026-11-14 expiry went unnoticed for a week.
+#
+# The VM renews at 30 days remaining, so anything under 21 means renewal has failed at least a week
+# running. A failed scheduled run emails whoever last edited this file.
+#
+# GitHub disables scheduled workflows after 60 days without repository activity. If this shows as
+# "disabled_inactivity", re-enable it with: gh workflow enable check-telemetry-cert.yml
+
+on:
+  schedule:
+    - cron: '41 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Check expiry on both ports
+        env:
+          HOST: ${{ vars.TELEMETRY_HOSTNAME }}
+          MIN_DAYS: 21
+        run: |
+          [[ -n "$HOST" ]] || { echo "::error::TELEMETRY_HOSTNAME is not set"; exit 1; }
+          fail=0
+          for port in 8443 443; do
+            # fleet-telemetry hangs up on a client with no certificate, so s_client's exit status
+            # is meaningless here; the PEM it printed before that is what gets checked.
+            pem=$(echo | timeout 20 openssl s_client -connect "$HOST:$port" -servername "$HOST" 2>/dev/null \
+                  | openssl x509 2>/dev/null || true)
+            if [[ -z "$pem" ]]; then
+              echo "::error::$HOST:$port served no certificate"; fail=1; continue
+            fi
+            until=$(openssl x509 -noout -enddate <<<"$pem" | cut -d= -f2)
+            echo "- \`$HOST:$port\` valid until $until" >> "$GITHUB_STEP_SUMMARY"
+            if ! openssl x509 -noout -checkend $((MIN_DAYS * 86400)) <<<"$pem" >/dev/null; then
+              echo "::error::$HOST:$port certificate expires $until — renewal on the VM is failing (journalctl -u evsolar-cert-renew)"
+              fail=1
+            fi
+          done
+          exit $fail
