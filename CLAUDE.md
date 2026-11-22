@@ -224,6 +224,15 @@ grid, `SkipNotAtHome` every cycle). Location is therefore registered with
 `resend_interval_seconds: 600` plus `prefer_typed: true` (which resend requires). If the gate ever
 sticks again, first check the registered config with `evsolar-register -status`.
 
+**The telemetry certificate renews on the VM, not in GitHub.** On 2026-11-14 the certificate on
+8443 expired and every car's handshake failed (`remote error: tls: bad certificate` in the
+fleet-telemetry log, nothing in the controller's). The old GitHub renewal workflow had never once
+succeeded — a missing secret, a stale Azure hostname — and nobody saw it fail. Renewal is now
+`evsolar-cert-renew.timer` on the host (`deploy/cert-renewal`); `journalctl -u evsolar-cert-renew`
+shows each run, and the **Check telemetry certificate** workflow alarms from outside under 21 days.
+The cars accept a new leaf without re-registering because the registered CA chain reaches ISRG
+Root YE; if Let's Encrypt moves ECDSA issuance to a different root, re-run `evsolar-register`.
+
 **Refresh tokens rotate on every use.** Both Enphase and Tesla invalidate the previous token when
 issuing a new one. The copy in SQLite is authoritative once the first refresh has happened; the
 `.env` value is a **seed**, used only when the store has none. Never re-seed from a stale `.env`,
