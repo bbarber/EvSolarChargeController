@@ -144,7 +144,6 @@ IP changed, update the DuckDNS A record for `evsolarchargecontroller.duckdns.org
 
 | Kind | Name | Scope | Used by |
 |---|---|---|---|
-| Variable | `TESLA_APP_DOMAIN` | repo | Deploy public key site |
 | Variable | `TELEMETRY_HOSTNAME` | `production` environment | Check telemetry certificate |
 | Secrets | *(none)* | — | — |
 
@@ -158,7 +157,6 @@ to GitHub; renewal was moved onto the VM precisely so none is needed.
 | CI | build, vet, test |
 | Build container | arm64 controller image to GHCR |
 | Check telemetry certificate | outside-in expiry alarm, described above |
-| Deploy public key site | **legacy.** Publishes `site/` to GitHub Pages, but the DuckDNS name now points at the VM and nginx there serves the key. It runs only when `site/` changes. |
 
 ### Where credentials live (never in git)
 
@@ -172,7 +170,9 @@ to GitHub; renewal was moved onto the VM precisely so none is needed.
 | SSH key to the VM | `~/.ssh/oci_evsolar` |
 | OCI API key | `~/.oci/` |
 
-### Leftovers that are harmless
+### Removed on 2026-11-22
 
-- `evsolarchargecontroller-tel.duckdns.org`: the old Azure telemetry name. Nothing uses it.
-- The GitHub Pages deployment (see Workflows).
+All Azure-era secrets and variables, the GitHub Pages site and its workflow (nginx on the VM serves
+the public key; the repo copy is `deploy/public-key/site/`), and the old renewal workflow. The old
+`evsolarchargecontroller-tel.duckdns.org` name had its address cleared. DuckDNS offers no API to
+delete a name, so it still exists but resolves to nothing.

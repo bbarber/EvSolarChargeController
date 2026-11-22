@@ -24,10 +24,8 @@ and DuckDNS has no CNAME, so the public key and the telemetry endpoint share one
 |---|---|---|
 | `evsolarchargecontroller.duckdns.org` | the VM's public IP | public key (nginx, 443) and fleet-telemetry (8443) |
 
-> History: this originally used two names, the key on GitHub Pages and telemetry on
-> `<something>-tel`. Tesla rejected that split ("hostname domain does not match with partner
-> account"). The Pages workflow and the `-tel` name are leftovers; see
-> [OPERATIONS.md](OPERATIONS.md#leftovers-that-are-harmless).
+> History: this originally used two names, the key on GitHub Pages and telemetry on a separate
+> `-tel` name. Tesla rejected that split ("hostname domain does not match with partner account").
 
 The A record can't be set until the VM exists (step 8), so create the name now and leave it
 pointing anywhere.
@@ -40,8 +38,8 @@ DUCKDNS_TOKEN=...
 ```
 
 DuckDNS supports TXT records, which is what lets Let's Encrypt issue the telemetry certificate over
-DNS-01. It does not support CNAME, which is why the public key is hosted on GitHub Pages (reachable
-by A record) rather than a service needing CNAME validation.
+DNS-01. It does not support CNAME, which is why the public key is served from the VM rather than a hosted
+service needing CNAME validation.
 
 ---
 
@@ -75,7 +73,7 @@ openssl ec -in fleet-key.pem -pubout -out public-key.pem
 vehicle as a virtual key, so losing or replacing it means re-pairing both cars by hand — with
 physical access. Back it up somewhere you trust.
 
-## 3. 🤖 Host the public key on GitHub Pages
+## 3. 🤖 Stage the public key
 
 Tesla fetches it from:
 
@@ -83,26 +81,23 @@ Tesla fetches it from:
 https://<app-domain>/.well-known/appspecific/com.tesla.3p.public-key.pem
 ```
 
-1. Copy the **public** half into the published site:
+The `public-key` nginx container on the VM serves it, using the same certificate as telemetry. Copy
+the **public** half into place in the repo:
 
-   ```bash
-   cp .secrets/tesla-keys/public-key.pem \
-      site/.well-known/appspecific/com.tesla.3p.public-key.pem
-   ```
+```bash
+cp .secrets/tesla-keys/public-key.pem \
+   deploy/public-key/site/.well-known/appspecific/com.tesla.3p.public-key.pem
+```
 
-2. Set the repository variable `TESLA_APP_DOMAIN` to `evsolarchargecontroller.duckdns.org`.
-3. In repository **Settings → Pages**, set the source to **GitHub Actions**.
-4. Point the DuckDNS A record for that name at `185.199.108.153`.
-5. Push. The **Deploy public key site** workflow publishes `site/`.
-
-Verify before moving on — a failed fetch produces an unhelpful error during pairing:
+Step 10 copies `deploy/public-key/` to the VM. Step 4 needs the key to be reachable, so pair after
+the VM is up, and verify first, because a failed fetch produces an unhelpful error during pairing:
 
 ```bash
 curl -sI https://evsolarchargecontroller.duckdns.org/.well-known/appspecific/com.tesla.3p.public-key.pem
 ```
 
-> The workflow refuses to publish if it finds any private key under `site/`, and `.gitignore`
-> allows `*.pem` through only for this one path.
+> `.gitignore` allows `*.pem` through only for this one path, so a stray copy of the private key
+> anywhere else in the tree cannot be committed.
 
 ## 4. 🧑 Register the application and pair the virtual key
 
@@ -204,7 +199,8 @@ On the VM:
 
 ```bash
 sudo mkdir -p /opt/evsolar && sudo chown ubuntu:ubuntu /opt/evsolar && cd /opt/evsolar
-# copy from deploy/: docker-compose.yml, .env (from .env.example), fleet-telemetry/config.json
+# copy from deploy/: docker-compose.yml, .env (from .env.example), fleet-telemetry/config.json,
+# public-key/ (nginx.conf and site/)
 mkdir -p secrets && cp ~/fleet-key.pem secrets/fleet-key.pem && chmod 600 secrets/fleet-key.pem
 docker compose up -d
 docker compose logs -f controller

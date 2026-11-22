@@ -206,7 +206,7 @@ internal/
 infra/oracle/           Terraform: VCN, subnet, security list, instance
 deploy/                 Dockerfile, compose file, fleet-telemetry config
 tools/                  one-time OAuth and registration scripts
-site/                   GitHub Pages: the public key Tesla fetches
+deploy/public-key/      nginx config and the public key Tesla fetches
 docs/                   setup runbook and architecture decisions
 ```
 

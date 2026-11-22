@@ -184,8 +184,10 @@ requires a fresh authorization.
 **Tesla token refresh — resolved.** Form-encoded `grant_type=refresh_token`, `client_id` and
 `refresh_token`, with **no client secret**. Tesla rotates the refresh token on use as well.
 
-**A domain name — resolved.** Free DuckDNS hostnames. `evsolarchargecontroller.duckdns.org` points
-at GitHub Pages for the public key; a second name points at the VM for telemetry. DuckDNS supports
+**A domain name — resolved.** One free DuckDNS hostname, `evsolarchargecontroller.duckdns.org`,
+pointing at the VM, which serves both the public key (nginx, 443) and telemetry (8443). The first
+design put the key on GitHub Pages and telemetry on a second name. Tesla rejected that, because the
+telemetry hostname must sit under the partner-registered domain. DuckDNS supports
 TXT records, which is what makes the DNS-01 certificate flow possible; it does **not** support
 CNAME, which is why the public key is hosted via A record.
 
