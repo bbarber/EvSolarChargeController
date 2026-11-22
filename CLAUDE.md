@@ -41,6 +41,15 @@ Commands are signed **in-process** using `teslamotors/vehicle-command` as a Go l
 
 ---
 
+## Operations
+
+Nothing needs routine maintenance. [docs/OPERATIONS.md](docs/OPERATIONS.md) is the runbook: what
+runs unattended (certificate renewal on the VM, the expiry alarm in GitHub, token rotation), the
+symptoms that need a person, and an inventory of GitHub config and where every credential lives.
+Keep it current when any of those change.
+
+---
+
 ## Local development
 
 ```bash
