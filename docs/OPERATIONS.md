@@ -114,6 +114,26 @@ gh workflow run check-telemetry-cert.yml
 
 This only switches off the *alarm*. Renewal on the VM does not depend on GitHub.
 
+### A plugged-in car never started charging
+
+A car that falls asleep before the sun is strong enough can only be charged if the controller wakes
+it. Look for the `not waking` line beside each `SkipNotCharging` decision:
+
+```bash
+docker compose logs --since 12h controller | grep '"not waking"' | tail
+```
+
+Its `reason` names the wake rule that failed. The common ones:
+- **Not a permitted wake day:** `EVSOLAR_WAKE_DAYS`, or the per-car
+  `EVSOLAR_WAKE_DAYS_<VIN>`, in `/opt/evsolar/.env`. As deployed: Fri–Sun, and weekends only for the Model Y.
+- **Daily limit or cooldown:** `EVSOLAR_MAX_WAKES_PER_DAY` and `EVSOLAR_WAKE_COOLDOWN`.
+- **Within the SoC headroom of the cap:** not worth a wake.
+- **Not enough sustained solar.**
+
+Editing `.env` takes effect on
+`docker compose up -d --force-recreate controller`. Each wake costs about $0.02 and some battery,
+which is why it is restricted at all.
+
 ### A car is stuck in `SkipOverrideActive`
 
 Overrides clear only on unplug. If the controller missed an unplug (for example during a telemetry

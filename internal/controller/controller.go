@@ -489,7 +489,11 @@ func (c *Controller) considerWake(ctx context.Context, vehicle *domain.VehicleSt
 	}, c.opts)
 
 	if !d.Wake {
-		c.log.Debug("not waking", "reason", d.Reason)
+		// Info, not Debug: "plugged in with 6A available but is offline; not waking it" says what
+		// happened but not why, and the why (wrong day, daily limit, cooldown, SoC headroom) is a
+		// setting someone will have forgotten by the time they ask. Only reached after a
+		// SkipNotCharging decision, so it adds one line beside a line that is already logged.
+		c.log.Info("not waking", "vin", vehicle.VIN, "reason", d.Reason)
 		return nil
 	}
 
